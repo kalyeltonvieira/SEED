@@ -291,10 +291,7 @@ public:
 // AST NODES
 // ==========================================
 
-struct ASTNode {
-    virtual ~ASTNode() = default;
-    virtual string to_cpp() = 0;
-};
+// Duplicate ASTNode definition removed
 
 // We will implement an incredibly relaxed CodeGen that just maps SEED tokens to C++ equivalents where needed,
 // Duplicate parser/include block removed
