@@ -1,0 +1,130 @@
+module todo_list
+
+import stdlib.io
+import stdlib.fs
+import stdlib.string
+import stdlib.collections
+
+/// Lista de tarefas com adicionar, remover, listar
+type Todo = {
+    id: int
+    text: string
+    done: bool
+}
+
+const DATA_FILE = "todos.json"
+
+fn load_todos() -> List[Todo] {
+    if !fs.file_exists(DATA_FILE) {
+        return List[Todo]()
+    }
+    
+    let content = fs.read_file(DATA_FILE)
+    let data = json.parse(content)
+    
+    let todos = List[Todo]()
+    for item in data.data {
+        todos.push(Todo(item.id, item.text, item.done))
+    }
+    
+    return todos
+}
+
+fn save_todos(todos: List[Todo]) {
+    let items = []
+    for todo in todos {
+        items.push(json.object([
+            ("id", json.number(todo.id)),
+            ("text", json.string(todo.text)),
+            ("done", json.boolean(todo.done))
+        ]))
+    }
+    
+    let data = json.array(items)
+    let json_str = json.stringify_pretty(data)
+    fs.write_file(DATA_FILE, json_str)
+}
+
+fn list_todos(todos: List[Todo]) {
+    println("\n=== Tarefas ===")
+    if todos.is_empty() {
+        println("Nenhuma tarefa.")
+    } else {
+        for i in 0..todos.len {
+            let todo = todos.get(i).unwrap()
+            let status = if todo.done { "[x]" } else { "[ ]" }
+            println(status + " " + (i + 1).to_string() + ". " + todo.text)
+        }
+    }
+    println("")
+}
+
+fn add_todo(todos: List[Todo], text: string) {
+    let id = if todos.is_empty() { 1 } else { todos.len() + 1 }
+    todos.push(Todo(id, text, false))
+    save_todos(todos)
+    println("Tarefa adicionada!")
+}
+
+fn remove_todo(todos: List[Todo], index: int) {
+    if index < 1 || index > todos.len() {
+        println("Índice inválido.")
+        return
+    }
+    
+    todos.remove(index - 1)
+    save_todos(todos)
+    println("Tarefa removida!")
+}
+
+fn toggle_todo(todos: List[Todo], index: int) {
+    if index < 1 || index > todos.len() {
+        println("Índice inválido.")
+        return
+    }
+    
+    let todo = todos.get(index - 1).unwrap()
+    todo.done = !todo.done
+    save_todos(todos)
+    println("Tarefa marcada!")
+}
+
+fn main() {
+    let todos = load_todos()
+    
+    println("=== Lista de Tarefas SEED ===")
+    
+    loop {
+        list_todos(todos)
+        println("Comandos: add, remove, toggle, list, sair")
+        let cmd = prompt("Comando: ")
+        
+        match cmd.split(" ")[0] {
+            "add" => {
+                let text = cmd.substring(4, cmd.len()).trim()
+                if text.len > 0 {
+                    add_todo(todos, text)
+                }
+            }
+            "remove" => {
+                let index = cmd.split(" ")[1].to_int()
+                remove_todo(todos, index)
+            }
+            "toggle" => {
+                let index = cmd.split(" ")[1].to_int()
+                toggle_todo(todos, index)
+            }
+            "list" => list_todos(todos)
+            "sair" => {
+                println("Até logo!")
+                break
+            }
+            _ => println("Comando inválido.")
+        }
+    }
+}
+
+fn prompt(msg: string) -> string {
+    print(msg)
+    return read_line()
+}

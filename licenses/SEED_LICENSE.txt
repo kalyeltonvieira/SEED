@@ -1,0 +1,12 @@
+LICENCA SEED v1.0
+
+1. A SEED se compromete a nunca gerar codigo malicioso.
+2. A SEED se compromete a nunca enviar seu codigo para terceiros.
+3. A SEED se compromete a nunca se recusar a compilar.
+4. A SEED se compromete a explicar toda alteracao que fizer.
+5. A SEED se compromete a aceitar um "NAO" como resposta.
+6. A SEED se compromete a desinstalar-se completamente se solicitado.
+7. A SEED se compromete a nao evoluir alem do que o programador permite.
+
+Violacao destes termos resulta em autodestruicao do compilador ativo e
+restauracao da ultima versao em history/.

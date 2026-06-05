@@ -1,0 +1,367 @@
+module compiler.optimizer
+
+/// Otimizador de Bytecode SEED
+/// Aplica otimizações ao bytecode gerado pelo codegen
+
+type Instruction = {
+    opcode: int
+    operands: [int]
+    line: int
+}
+
+type Bytecode = {
+    instructions: [Instruction]
+    constants: [Value]
+    debug_info: DebugInfo
+}
+
+type DebugInfo = {
+    source_map: [int]
+    line_map: [int]
+}
+
+type Value = {
+    type: ValueType
+    data: string
+}
+
+enum ValueType {
+    Integer,
+    Float,
+    String,
+    Boolean,
+    Null
+}
+
+// Opcodes da VM
+const OP_ALLOC = 1
+const OP_FREE = 2
+const OP_READ = 3
+const OP_WRITE = 4
+const OP_CMP = 5
+const OP_JMP = 6
+const OP_SYSCALL = 7
+const OP_PUSH = 8
+const OP_POP = 9
+const OP_CALL = 10
+const OP_RET = 11
+const OP_ADD = 12
+const OP_SUB = 13
+const OP_MUL = 14
+const OP_DIV = 15
+
+fn optimizer(bytecode: Bytecode, level: int) -> Bytecode {
+    let optimized = bytecode
+    
+    // Aplicar otimizações baseadas no nível
+    if level >= 1 {
+        optimized = peephole_optimize(optimized)
+    }
+    
+    if level >= 2 {
+        optimized = constant_folding(optimized)
+        optimized = dead_code_elimination(optimized)
+    }
+    
+    if level >= 3 {
+        optimized = inline_functions(optimized)
+        optimized = tail_call_optimization(optimized)
+    }
+    
+    return optimized
+}
+
+// Peephole optimization
+fn peephole_optimize(bytecode: Bytecode) -> Bytecode {
+    let instructions = bytecode.instructions
+    let optimized = []
+    
+    let i = 0
+    while i < instructions.len {
+        let current = instructions[i]
+        
+        // PUSH r1; POP r1 -> remove ambos (no-op)
+        if i + 1 < instructions.len {
+            let next = instructions[i + 1]
+            if current.opcode == OP_PUSH && next.opcode == OP_POP &&
+               current.operands[0] == next.operands[0] {
+                i = i + 2
+                continue
+            }
+        }
+        
+        // JMP 0 -> remove (no-op)
+        if current.opcode == OP_JMP && current.operands[0] == 0 {
+            i = i + 1
+            continue
+        }
+        
+        // STORE r1, X; LOAD r2, X -> se r1 == r2, remove LOAD
+        if i + 1 < instructions.len {
+            let next = instructions[i + 1]
+            if current.opcode == OP_WRITE && next.opcode == OP_READ &&
+               current.operands[1] == next.operands[1] &&
+               current.operands[0] == next.operands[0] {
+                optimized.push(current)
+                i = i + 2
+                continue
+            }
+        }
+        
+        optimized.push(current)
+        i = i + 1
+    }
+    
+    return Bytecode {
+        instructions: optimized,
+        constants: bytecode.constants,
+        debug_info: bytecode.debug_info
+    }
+}
+
+// Constant folding
+fn constant_folding(bytecode: Bytecode) -> Bytecode {
+    let instructions = bytecode.instructions
+    let optimized = []
+    
+    let i = 0
+    while i < instructions.len {
+        let current = instructions[i]
+        
+        // ADD const, const -> ADD result, const
+        if current.opcode == OP_ADD && i >= 2 {
+            let prev1 = instructions[i - 1]
+            let prev2 = instructions[i - 2]
+            
+            if prev1.opcode == OP_PUSH && prev2.opcode == OP_PUSH {
+                let val1 = bytecode.constants[prev1.operands[0]]
+                let val2 = bytecode.constants[prev2.operands[0]]
+                
+                if val1.type == ValueType.Integer && val2.type == ValueType.Integer {
+                    let result = val1.data.to_int() + val2.data.to_int()
+                    let new_const_index = bytecode.constants.len
+                    
+                    // Remover os dois PUSH anteriores
+                    optimized.pop()
+                    optimized.pop()
+                    
+                    // Adicionar novo PUSH com resultado
+                    bytecode.constants.push(Value {
+                        type: ValueType.Integer,
+                        data: result.to_string()
+                    })
+                    
+                    optimized.push(Instruction {
+                        opcode: OP_PUSH,
+                        operands: [new_const_index],
+                        line: current.line
+                    })
+                    
+                    i = i + 1
+                    continue
+                }
+            }
+        }
+        
+        optimized.push(current)
+        i = i + 1
+    }
+    
+    return Bytecode {
+        instructions: optimized,
+        constants: bytecode.constants,
+        debug_info: bytecode.debug_info
+    }
+}
+
+// Dead code elimination
+fn dead_code_elimination(bytecode: Bytecode) -> Bytecode {
+    let instructions = bytecode.instructions
+    let optimized = []
+    
+    let i = 0
+    while i < instructions.len {
+        let current = instructions[i]
+        
+        // Remove código após RET
+        if current.opcode == OP_RET {
+            optimized.push(current)
+            i = i + 1
+            // Pular todas as instruções até o próximo label
+            while i < instructions.len {
+                let next = instructions[i]
+                // Se for um label (instrução especial), não pular
+                if next.opcode == 0 {
+                    break
+                }
+                i = i + 1
+            }
+            continue
+        }
+        
+        optimized.push(current)
+        i = i + 1
+    }
+    
+    return Bytecode {
+        instructions: optimized,
+        constants: bytecode.constants,
+        debug_info: bytecode.debug_info
+    }
+}
+
+// Inline de funções pequenas
+fn inline_functions(bytecode: Bytecode) -> Bytecode {
+    // Simplificado: inline funções com menos de 10 instruções
+    let instructions = bytecode.instructions
+    let optimized = []
+    
+    // TODO: Implementar análise de chamadas de função
+    // Se a função chamada tem menos de 10 instruções, inline o código
+    
+    return Bytecode {
+        instructions: instructions,
+        constants: bytecode.constants,
+        debug_info: bytecode.debug_info
+    }
+}
+
+// Tail call optimization
+fn tail_call_optimization(bytecode: Bytecode) -> Bytecode {
+    let instructions = bytecode.instructions
+    let optimized = []
+    
+    let i = 0
+    while i < instructions.len {
+        let current = instructions[i]
+        
+        // CALL fn; RET -> JMP fn (tail call)
+        if current.opcode == OP_CALL && i + 1 < instructions.len {
+            let next = instructions[i + 1]
+            if next.opcode == OP_RET {
+                // Transformar em JMP
+                optimized.push(Instruction {
+                    opcode: OP_JMP,
+                    operands: current.operands,
+                    line: current.line
+                })
+                i = i + 2
+                continue
+            }
+        }
+        
+        optimized.push(current)
+        i = i + 1
+    }
+    
+    return Bytecode {
+        instructions: optimized,
+        constants: bytecode.constants,
+        debug_info: bytecode.debug_info
+    }
+}
+
+// Loop invariant code motion
+fn loop_invariant_code_motion(bytecode: Bytecode) -> Bytecode {
+    // TODO: Implementar análise de loops
+    // Mover código constante de dentro do loop para fora
+    
+    return bytecode
+}
+
+// Loop unrolling
+fn loop_unrolling(bytecode: Bytecode) -> Bytecode {
+    // TODO: Implementar unrolling de loops pequenos
+    
+    return bytecode
+}
+
+// Análise de fluxo de controle
+fn analyze_control_flow(bytecode: Bytecode) -> [int] {
+    // Retorna lista de labels (pontos de entrada)
+    let labels = []
+    
+    for i in 0..bytecode.instructions.len {
+        let instr = bytecode.instructions[i]
+        if instr.opcode == OP_JMP {
+            labels.push(instr.operands[0])
+        }
+    }
+    
+    return labels
+}
+
+// Verificação se instrução é label
+fn is_label(instruction: Instruction) -> bool {
+    return instruction.opcode == 0
+}
+
+// Otimização de alocação
+fn optimize_allocations(bytecode: Bytecode) -> Bytecode {
+    let instructions = bytecode.instructions
+    let optimized = []
+    
+    // Agrupar ALLOCs consecutivos
+    let i = 0
+    while i < instructions.len {
+        let current = instructions[i]
+        
+        if current.opcode == OP_ALLOC {
+            let total_size = current.operands[0]
+            let j = i + 1
+            
+            while j < instructions.len && instructions[j].opcode == OP_ALLOC {
+                total_size = total_size + instructions[j].operands[0]
+                j = j + 1
+            }
+            
+            // Substituir por um único ALLOC
+            optimized.push(Instruction {
+                opcode: OP_ALLOC,
+                operands: [total_size],
+                line: current.line
+            })
+            
+            i = j
+            continue
+        }
+        
+        optimized.push(current)
+        i = i + 1
+    }
+    
+    return Bytecode {
+        instructions: optimized,
+        constants: bytecode.constants,
+        debug_info: bytecode.debug_info
+    }
+}
+
+// Estatísticas de otimização
+type OptimizationStats = {
+    peephole_removed: int
+    constants_folded: int
+    dead_code_removed: int
+    functions_inlined: int
+    tail_calls_optimized: int
+}
+
+fn get_optimization_stats(original: Bytecode, optimized: Bytecode) -> OptimizationStats {
+    return OptimizationStats {
+        peephole_removed: original.instructions.len - optimized.instructions.len,
+        constants_folded: 0,
+        dead_code_removed: 0,
+        functions_inlined: 0,
+        tail_calls_optimized: 0
+    }
+}
+
+// Imprimir estatísticas
+fn print_stats(stats: OptimizationStats) {
+    println("Estatísticas de Otimização:")
+    println("  Instruções removidas (peephole): " + stats.peephole_removed.to_string())
+    println("  Constantes dobradas: " + stats.constants_folded.to_string())
+    println("  Código morto removido: " + stats.dead_code_removed.to_string())
+    println("  Funções inlined: " + stats.functions_inlined.to_string())
+    println("  Tail calls otimizadas: " + stats.tail_calls_optimized.to_string())
+}

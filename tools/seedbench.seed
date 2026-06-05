@@ -1,0 +1,191 @@
+module seedbench
+
+import stdlib.io
+import stdlib.time
+import stdlib.string
+import stdlib.cli
+
+/// Benchmarking tool for SEED
+type Benchmark = {
+    name: string
+    fn: fn()
+    iterations: int
+}
+
+type BenchmarkResult = {
+    name: string
+    iterations: int
+    total_time: float
+    avg_time: float
+    min_time: float
+    max_time: float
+    ops_per_sec: float
+}
+
+fn benchmark(name: string, fn: fn(), iterations: int) -> Benchmark {
+    return Benchmark {
+        name: name,
+        fn: fn,
+        iterations: iterations
+    }
+}
+
+fn run(bench: Benchmark) -> BenchmarkResult {
+    println("Benchmarking: " + bench.name)
+    println("Iterations: " + bench.iterations.to_string())
+    
+    // Warmup
+    for i in 0..10 {
+        bench.fn()
+    }
+    
+    let times = []
+    let start = time.now()
+    
+    for i in 0..bench.iterations {
+        let iter_start = time.now()
+        bench.fn()
+        let elapsed = time.elapsed(iter_start)
+        times.push(time.to_millis(elapsed))
+    }
+    
+    let total_time = time.elapsed(start)
+    let total_ms = time.to_millis(total_time)
+    
+    let avg_time = total_ms / bench.iterations
+    let min_time = times.reduce((a, b) => if a < b { a } else { b }, times[0])
+    let max_time = times.reduce((a, b) => if a > b { a } else { b }, times[0])
+    let ops_per_sec = (bench.iterations * 1000) / total_ms
+    
+    return BenchmarkResult {
+        name: bench.name,
+        iterations: bench.iterations,
+        total_time: total_ms,
+        avg_time: avg_time,
+        min_time: min_time,
+        max_time: max_time,
+        ops_per_sec: ops_per_sec
+    }
+}
+
+fn print_result(result: BenchmarkResult) {
+    println("\n" + cli.color(result.name, "cyan"))
+    println("  Iterations:    " + result.iterations.to_string())
+    println("  Total time:    " + result.total_time.to_string() + " ms")
+    println("  Avg time:      " + result.avg_time.to_string() + " ms")
+    println("  Min time:      " + result.min_time.to_string() + " ms")
+    println("  Max time:      " + result.max_time.to_string() + " ms")
+    println("  Ops/sec:       " + result.ops_per_sec.to_string())
+}
+
+fn compare(results: [BenchmarkResult]) {
+    println("\n" + cli.color("=" * 50, "white"))
+    println("Comparison:")
+    
+    let baseline = results[0]
+    
+    for result in results {
+        let ratio = result.avg_time / baseline.avg_time
+        let status = if ratio < 1.0 {
+            cli.color((ratio * 100).to_string() + "% faster", "green")
+        } else if ratio > 1.0 {
+            cli.color((ratio * 100).to_string() + "% slower", "red")
+        } else {
+            "same"
+        }
+        
+        println("  " + result.name + ": " + status)
+    }
+}
+
+fn group(benchmarks: [Benchmark]) -> BenchmarkResult {
+    let total_iterations = 0
+    let total_time = 0.0
+    let all_times = []
+    
+    for bench in benchmarks {
+        let result = run(bench)
+        total_iterations = total_iterations + result.iterations
+        total_time = total_time + result.total_time
+        all_times = all_times + [result.avg_time]
+    }
+    
+    let avg_time = all_times.reduce((a, b) => a + b, 0.0) / all_times.len
+    let min_time = all_times.reduce((a, b) => if a < b { a } else { b }, all_times[0])
+    let max_time = all_times.reduce((a, b) => if a > b { a } else { b }, all_times[0])
+    let ops_per_sec = (total_iterations * 1000) / total_time
+    
+    return BenchmarkResult {
+        name: "group",
+        iterations: total_iterations,
+        total_time: total_time,
+        avg_time: avg_time,
+        min_time: min_time,
+        max_time: max_time,
+        ops_per_sec: ops_per_sec
+    }
+}
+
+fn memory_usage() -> int {
+    return os.memory_used()
+}
+
+fn memory_before_after(fn: fn()) -> (int, int) {
+    let before = memory_usage()
+    fn()
+    let after = memory_usage()
+    return (before, after)
+}
+
+fn main(args: [string]) {
+    let iterations = 1000
+    let compare_mode = false
+    
+    for i in 0..args.len {
+        if args[i] == "--iterations" && i + 1 < args.len {
+            iterations = args[i + 1].to_int()
+        } else if args[i] == "--compare" {
+            compare_mode = true
+        }
+    }
+    
+    println("SEED Benchmark v1.0")
+    println("Iterations: " + iterations.to_string())
+    println("")
+    
+    // Example benchmarks
+    let benchmarks = [
+        benchmark("string_concat", fn() {
+            let s = ""
+            for i in 0..100 {
+                s = s + "hello"
+            }
+        }, iterations),
+        
+        benchmark("array_push", fn() {
+            let arr = []
+            for i in 0..100 {
+                arr.push(i)
+            }
+        }, iterations),
+        
+        benchmark("math_sqrt", fn() {
+            for i in 0..100 {
+                math.sqrt(i)
+            }
+        }, iterations)
+    ]
+    
+    let results = []
+    for bench in benchmarks {
+        let result = run(bench)
+        results.push(result)
+        print_result(result)
+    }
+    
+    if compare_mode && results.len > 1 {
+        compare(results)
+    }
+    
+    println("\nDone!")
+}

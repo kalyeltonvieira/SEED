@@ -1,0 +1,80 @@
+module stdlib.json
+
+type Value = {
+    kind: string
+    data: any
+}
+
+type Error = {
+    message: string
+    position: int
+}
+
+/// String para valor
+fn parse(s: string) -> Result[Value, Error] {
+    return syscall.json_parse(s)
+}
+
+/// Valor para string
+fn stringify(v: Value) -> Result[string, Error] {
+    return syscall.json_stringify(v)
+}
+
+/// Formatado
+fn stringify_pretty(v: Value) -> Result[string, Error] {
+    return syscall.json_stringify_pretty(v)
+}
+
+/// Cria objeto JSON
+fn object(pairs: [(string, Value)]) -> Value {
+    let obj = dict()
+    for (key, value) in pairs {
+        obj[key] = value
+    }
+    return Value("object", obj)
+}
+
+/// Cria array JSON
+fn array(items: [Value]) -> Value {
+    return Value("array", items)
+}
+
+/// Cria string JSON
+fn string(s: string) -> Value {
+    return Value("string", s)
+}
+
+/// Cria número JSON
+fn number(n: float) -> Value {
+    return Value("number", n)
+}
+
+/// Cria boolean JSON
+fn boolean(b: bool) -> Value {
+    return Value("boolean", b)
+}
+
+/// Cria null JSON
+fn null() -> Value {
+    return Value("null", null)
+}
+
+/// Obtém campo de objeto
+fn get(obj: Value, key: string) -> Option[Value] {
+    if obj.kind != "object" { return Option[Value].None }
+    let data = obj.data
+    if data.has(key) {
+        return Option[Value].Some(data[key])
+    }
+    return Option[Value].None
+}
+
+/// Obtém elemento de array
+fn at(arr: Value, index: int) -> Option[Value] {
+    if arr.kind != "array" { return Option[Value].None }
+    let data = arr.data
+    if index >= 0 && index < data.len {
+        return Option[Value].Some(data[index])
+    }
+    return Option[Value].None
+}

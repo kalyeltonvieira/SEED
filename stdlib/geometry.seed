@@ -1,0 +1,133 @@
+module stdlib.geometry
+
+import stdlib.math
+
+/// Geometry and Vector math module for 2D/3D applications
+
+pub type Vector2 = {
+    x: float,
+    y: float
+}
+
+pub type Vector3 = {
+    x: float,
+    y: float,
+    z: float
+}
+
+pub type Rect = {
+    x: float,
+    y: float,
+    width: float,
+    height: float
+}
+
+// Vector2 functions
+pub fn vec2(x: float, y: float) -> Vector2 {
+    return Vector2 { x: x, y: y }
+}
+
+pub fn vec2_add(a: Vector2, b: Vector2) -> Vector2 {
+    return Vector2 { x: a.x + b.x, y: a.y + b.y }
+}
+
+pub fn vec2_sub(a: Vector2, b: Vector2) -> Vector2 {
+    return Vector2 { x: a.x - b.x, y: a.y - b.y }
+}
+
+pub fn vec2_mul(v: Vector2, scalar: float) -> Vector2 {
+    return Vector2 { x: v.x * scalar, y: v.y * scalar }
+}
+
+pub fn vec2_div(v: Vector2, scalar: float) -> Vector2 {
+    return Vector2 { x: v.x / scalar, y: v.y / scalar }
+}
+
+pub fn vec2_magnitude(v: Vector2) -> float {
+    return math.sqrt(v.x * v.x + v.y * v.y)
+}
+
+pub fn vec2_normalize(v: Vector2) -> Vector2 {
+    let mag = vec2_magnitude(v)
+    if mag == 0.0 {
+        return Vector2 { x: 0.0, y: 0.0 }
+    }
+    return vec2_div(v, mag)
+}
+
+pub fn vec2_dot(a: Vector2, b: Vector2) -> float {
+    return a.x * b.x + a.y * b.y
+}
+
+pub fn vec2_distance(a: Vector2, b: Vector2) -> float {
+    return vec2_magnitude(vec2_sub(a, b))
+}
+
+pub fn vec2_lerp(a: Vector2, b: Vector2, t: float) -> Vector2 {
+    return Vector2 {
+        x: math.lerp(a.x, b.x, t),
+        y: math.lerp(a.y, b.y, t)
+    }
+}
+
+// Vector3 functions
+pub fn vec3(x: float, y: float, z: float) -> Vector3 {
+    return Vector3 { x: x, y: y, z: z }
+}
+
+pub fn vec3_add(a: Vector3, b: Vector3) -> Vector3 {
+    return Vector3 { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z }
+}
+
+pub fn vec3_sub(a: Vector3, b: Vector3) -> Vector3 {
+    return Vector3 { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z }
+}
+
+pub fn vec3_mul(v: Vector3, scalar: float) -> Vector3 {
+    return Vector3 { x: v.x * scalar, y: v.y * scalar, z: v.z * scalar }
+}
+
+pub fn vec3_div(v: Vector3, scalar: float) -> Vector3 {
+    return Vector3 { x: v.x / scalar, y: v.y / scalar, z: v.z / scalar }
+}
+
+pub fn vec3_magnitude(v: Vector3) -> float {
+    return math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
+}
+
+pub fn vec3_normalize(v: Vector3) -> Vector3 {
+    let mag = vec3_magnitude(v)
+    if mag == 0.0 {
+        return Vector3 { x: 0.0, y: 0.0, z: 0.0 }
+    }
+    return vec3_div(v, mag)
+}
+
+pub fn vec3_dot(a: Vector3, b: Vector3) -> float {
+    return a.x * b.x + a.y * b.y + a.z * b.z
+}
+
+pub fn vec3_cross(a: Vector3, b: Vector3) -> Vector3 {
+    return Vector3 {
+        x: a.y * b.z - a.z * b.y,
+        y: a.z * b.x - a.x * b.z,
+        z: a.x * b.y - a.y * b.x
+    }
+}
+
+// Rect and Collision functions
+pub fn rect(x: float, y: float, w: float, h: float) -> Rect {
+    return Rect { x: x, y: y, width: w, height: h }
+}
+
+pub fn rect_contains(r: Rect, p: Vector2) -> bool {
+    return p.x >= r.x && p.x <= r.x + r.width &&
+           p.y >= r.y && p.y <= r.y + r.height
+}
+
+pub fn rect_intersects(a: Rect, b: Rect) -> bool {
+    return a.x < b.x + b.width &&
+           a.x + a.width > b.x &&
+           a.y < b.y + b.height &&
+           a.y + a.height > b.y
+}

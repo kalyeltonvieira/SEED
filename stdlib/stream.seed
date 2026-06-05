@@ -1,0 +1,121 @@
+module stdlib.stream
+
+/// Stream processing module
+
+pub type Stream<T> = {
+    source: fn() -> Option<T>
+}
+
+pub fn stream<T>(source: fn() -> Option<T>) -> Stream<T> {
+    return Stream { source: source }
+}
+
+pub fn map<T, U>(s: Stream<T>, f: fn(T) -> U) -> Stream<U> {
+    return stream(|| {
+        let item = s.source()
+        if item.is_some {
+            return Option<U>.Some(f(item.unwrap()))
+        }
+        return Option<U>.None
+    })
+}
+
+pub fn filter<T>(s: Stream<T>, f: fn(T) -> bool) -> Stream<T> {
+    return stream(|| {
+        while true {
+            let item = s.source()
+            if item.is_none { return Option<T>.None }
+            if f(item.unwrap()) { return item }
+        }
+    })
+}
+
+pub fn fold<T, U>(s: Stream<T>, init: U, f: fn(U, T) -> U) -> U {
+    let result = init
+    while true {
+        let item = s.source()
+        if item.is_none { break }
+        result = f(result, item.unwrap())
+    }
+    return result
+}
+
+pub fn collect<T>(s: Stream<T>) -> [T] {
+    let result = []
+    while true {
+        let item = s.source()
+        if item.is_none { break }
+        result.push(item.unwrap())
+    }
+    return result
+}
+
+pub fn count<T>(s: Stream<T>) -> int {
+    let count = 0
+    while true {
+        let item = s.source()
+        if item.is_none { break }
+        count = count + 1
+    }
+    return count
+}
+
+pub fn take<T>(s: Stream<T>, n: int) -> Stream<T> {
+    let remaining = n
+    return stream(|| {
+        if remaining <= 0 { return Option<T>.None }
+        remaining = remaining - 1
+        return s.source()
+    })
+}
+
+pub fn skip<T>(s: Stream<T>, n: int) -> Stream<T> {
+    let skipped = 0
+    return stream(|| {
+        while skipped < n {
+            let item = s.source()
+            if item.is_none { return Option<T>.None }
+            skipped = skipped + 1
+        }
+        return s.source()
+    })
+}
+
+pub fn for_each<T>(s: Stream<T>, f: fn(T)) {
+    while true {
+        let item = s.source()
+        if item.is_none { break }
+        f(item.unwrap())
+    }
+}
+
+pub fn from_array<T>(arr: [T]) -> Stream<T> {
+    let index = 0
+    return stream(|| {
+        if index >= arr.len { return Option<T>.None }
+        let result = arr[index]
+        index = index + 1
+        return Option<T>.Some(result)
+    })
+}
+
+pub fn from_string(s: string) -> Stream<char> {
+    let index = 0
+    return stream(|| {
+        if index >= s.len { return Option<char>.None }
+        let result = s[index]
+        index = index + 1
+        return Option<char>.Some(result)
+    })
+}
+
+pub fn from_file(path: string) -> Stream<string> {
+    let lines = io.read_file(path).split("\n")
+    let index = 0
+    return stream(|| {
+        if index >= lines.len { return Option<string>.None }
+        let result = lines[index]
+        index = index + 1
+        return Option<string>.Some(result)
+    })
+}

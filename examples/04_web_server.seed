@@ -1,0 +1,54 @@
+module web_server
+
+import stdlib.io
+import stdlib.net
+import stdlib.fs
+
+/// Servidor HTTP mínimo que serve arquivos estáticos
+fn main() {
+    let port = 8080
+    let public_dir = "public"
+    
+    println("=== Servidor HTTP SEED ===")
+    println("Porta: " + port.to_string())
+    println("Diretório: " + public_dir)
+    println("Pressione Ctrl+C para parar")
+    println("")
+    
+    net.serve(port, fn(req: net.Request) -> net.Response {
+        let path = if req.url == "/" { "/index.html" } else { req.url }
+        let file_path = public_dir + path
+        
+        if fs.file_exists(file_path) {
+            let content = fs.read_file(file_path)
+            let content_type = get_content_type(file_path)
+            
+            return net.Response {
+                status: 200,
+                headers: {
+                    "Content-Type": content_type,
+                    "Content-Length": content.len().to_string()
+                },
+                body: content
+            }
+        } else {
+            return net.Response {
+                status: 404,
+                headers: { "Content-Type": "text/plain" },
+                body: "404 Not Found"
+            }
+        }
+    })
+}
+
+fn get_content_type(path: string) -> string {
+    if path.ends_with(".html") { return "text/html" }
+    if path.ends_with(".css") { return "text/css" }
+    if path.ends_with(".js") { return "application/javascript" }
+    if path.ends_with(".json") { return "application/json" }
+    if path.ends_with(".png") { return "image/png" }
+    if path.ends_with(".jpg") || path.ends_with(".jpeg") { return "image/jpeg" }
+    if path.ends_with(".gif") { return "image/gif" }
+    if path.ends_with(".svg") { return "image/svg+xml" }
+    return "application/octet-stream"
+}

@@ -1,0 +1,100 @@
+module game_of_life
+
+import stdlib.io
+import stdlib.time
+import stdlib.string
+
+/// Conway's Game of Life renderizado no terminal
+const WIDTH = 80
+const HEIGHT = 24
+
+type Grid = [[bool]]
+
+fn create_grid() -> Grid {
+    let grid = []
+    for y in 0..HEIGHT {
+        let row = []
+        for x in 0..WIDTH {
+            row.push(false)
+        }
+        grid.push(row)
+    }
+    return grid
+}
+
+fn randomize_grid(grid: Grid) {
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            grid[y][x] = math.random() > 0.5
+        }
+    }
+}
+
+fn count_neighbors(grid: Grid, x: int, y: int) -> int {
+    let count = 0
+    for dy in -1..2 {
+        for dx in -1..2 {
+            if dx == 0 && dy == 0 { continue }
+            let nx = (x + dx + WIDTH) % WIDTH
+            let ny = (y + dy + HEIGHT) % HEIGHT
+            if grid[ny][nx] { count = count + 1 }
+        }
+    }
+    return count
+}
+
+fn next_generation(grid: Grid) -> Grid {
+    let new_grid = create_grid()
+    
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            let neighbors = count_neighbors(grid, x, y)
+            let alive = grid[y][x]
+            
+            new_grid[y][x] = if alive {
+                neighbors == 2 || neighbors == 3
+            } else {
+                neighbors == 3
+            }
+        }
+    }
+    
+    return new_grid
+}
+
+fn render_grid(grid: Grid) -> string {
+    let output = ""
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            output = output + if grid[y][x] { "█" } else { " " }
+        }
+        output = output + "\n"
+    }
+    return output
+}
+
+fn clear_screen() {
+    print("\033[2J\033[H")
+}
+
+fn main() {
+    println("=== Conway's Game of Life ===")
+    println("Pressione Ctrl+C para sair")
+    println("")
+    
+    let grid = create_grid()
+    randomize_grid(grid)
+    
+    let generation = 0
+    
+    loop {
+        clear_screen()
+        println("Geração: " + generation.to_string())
+        println(render_grid(grid))
+        
+        grid = next_generation(grid)
+        generation = generation + 1
+        
+        time.sleep(100)
+    }
+}

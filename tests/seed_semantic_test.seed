@@ -1,0 +1,34 @@
+module tests.seed_semantic_test
+
+type MyInt = i32
+
+test "constant-folding" {
+    const x = 1 + 2 * 3
+    assert(x == 7)
+    
+    let signed_8: i8 = 10
+    let signed_16: i16 = 1000
+    let unsigned_32: u32 = 42
+    let unsigned_128: u128 = 999999
+    
+    let is_active: bool = true
+    let letter: char = 'a'
+    let alias_val: MyInt = 456
+    
+    let option_val: Option[string] = Option.Some("value")
+    let generic_any: any = 123
+}
+
+fn bad_type_declaration() {
+    let nome: string = 123
+}
+
+fn bad_return() -> int {
+    return "string_value"
+}
+
+fn bad_scope() {
+    let a = 1
+    let a = 2
+    let b = undeclared_var
+}

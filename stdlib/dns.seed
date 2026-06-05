@@ -1,0 +1,22 @@
+module stdlib.dns
+
+/// DNS (Domain Name System) client module
+
+pub type DNSRecord = {
+    name: string,
+    record_type: string,
+    value: string,
+    ttl: int
+}
+
+pub fn resolve(hostname: string) -> Result[string, string] {
+    return syscall.dns_resolve(hostname)
+}
+
+pub fn lookup(hostname: string, record_type: string) -> Result[[DNSRecord], string] {
+    return syscall.dns_lookup(hostname, record_type)
+}
+
+pub fn reverse_lookup(ip: string) -> Result[string, string] {
+    return syscall.dns_reverse_lookup(ip)
+}

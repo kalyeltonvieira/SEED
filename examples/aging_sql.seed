@@ -1,0 +1,8 @@
+module examples.aging_sql
+
+#[expires(data_rows("usuarios") > 100000)]
+fn buscar_usuarios() effect fs -> Result[Array[Usuario], Error] {
+    sql_query("SELECT * FROM usuarios")
+}
+
+// SEED should emit SEED003 and propose paginated cache access.

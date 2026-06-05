@@ -1,0 +1,207 @@
+module raytracer
+
+import stdlib.io
+import stdlib.math
+import stdlib.string
+
+/// Raytracer que gera imagem PPM de esferas coloridas
+type Vec3 = {
+    x: float
+    y: float
+    z: float
+}
+
+type Ray = {
+    origin: Vec3
+    direction: Vec3
+}
+
+type Sphere = {
+    center: Vec3
+    radius: float
+    color: Vec3
+}
+
+type Hit = {
+    t: float
+    point: Vec3
+    normal: Vec3
+    color: Vec3
+}
+
+fn vec3(x: float, y: float, z: float) -> Vec3 {
+    return Vec3 { x: x, y: y, z: z }
+}
+
+fn add(a: Vec3, b: Vec3) -> Vec3 {
+    return vec3(a.x + b.x, a.y + b.y, a.z + b.z)
+}
+
+fn sub(a: Vec3, b: Vec3) -> Vec3 {
+    return vec3(a.x - b.x, a.y - b.y, a.z - b.z)
+}
+
+fn mul(v: Vec3, t: float) -> Vec3 {
+    return vec3(v.x * t, v.y * t, v.z * t)
+}
+
+fn dot(a: Vec3, b: Vec3) -> float {
+    return a.x * b.x + a.y * b.y + a.z * b.z
+}
+
+fn length(v: Vec3) -> float {
+    return math.sqrt(dot(v, v))
+}
+
+fn normalize(v: Vec3) -> Vec3 {
+    let len = length(v)
+    return mul(v, 1.0 / len)
+}
+
+fn hit_sphere(sphere: Sphere, ray: Ray, t_min: float, t_max: float) -> Option[Hit] {
+    let oc = sub(ray.origin, sphere.center)
+    let a = dot(ray.direction, ray.direction)
+    let b = 2.0 * dot(oc, ray.direction)
+    let c = dot(oc, oc) - sphere.radius * sphere.radius
+    let discriminant = b * b - 4.0 * a * c
+    
+    if discriminant < 0 {
+        return Option[Hit].None
+    }
+    
+    let sqrt_d = math.sqrt(discriminant)
+    let t = (-b - sqrt_d) / (2.0 * a)
+    
+    if t < t_min || t > t_max {
+        let t = (-b + sqrt_d) / (2.0 * a)
+        if t < t_min || t > t_max {
+            return Option[Hit].None
+        }
+    }
+    
+    let point = add(ray.origin, mul(ray.direction, t))
+    let normal = normalize(sub(point, sphere.center))
+    
+    return Option[Hit].Some(Hit {
+        t: t,
+        point: point,
+        normal: normal,
+        color: sphere.color
+    })
+}
+
+fn ray_color(ray: Ray, spheres: List[Sphere], depth: int) -> Vec3 {
+    if depth <= 0 {
+        return vec3(0.0, 0.0, 0.0)
+    }
+    
+    let closest = null
+    let closest_t = 1000.0
+    
+    for sphere in spheres {
+        let hit = hit_sphere(sphere, ray, 0.001, closest_t)
+        match hit {
+            Option[Hit].Some(h) => {
+                closest = h
+                closest_t = h.t
+            }
+            Option[Hit].None => {}
+        }
+    }
+    
+    if closest != null {
+        // Simple diffuse lighting
+        let light_dir = normalize(vec3(1.0, 1.0, -1.0))
+        let diffuse = math.max(0.0, dot(closest.normal, light_dir))
+        return mul(closest.color, 0.5 + diffuse * 0.5)
+    }
+    
+    // Sky gradient
+    let unit_dir = normalize(ray.direction)
+    let t = 0.5 * (unit_dir.y + 1.0)
+    return add(
+        mul(vec3(1.0, 1.0, 1.0), 1.0 - t),
+        mul(vec3(0.5, 0.7, 1.0), t)
+    )
+}
+
+fn main() {
+    const WIDTH = 800
+    const HEIGHT = 600
+    const ASPECT_RATIO = WIDTH / HEIGHT
+    
+    println("=== Raytracer SEED ===")
+    println("Renderizando " + WIDTH.to_string() + "x" + HEIGHT.to_string() + "...")
+    
+    let camera_origin = vec3(0.0, 0.0, 0.0)
+    let viewport_height = 2.0
+    let viewport_width = ASPECT_RATIO * viewport_height
+    let focal_length = 1.0
+    
+    let horizontal = vec3(viewport_width, 0.0, 0.0)
+    let vertical = vec3(0.0, viewport_height, 0.0)
+    let lower_left_corner = sub(
+        sub(
+            sub(camera_origin, mul(horizontal, 0.5)),
+            mul(vertical, 0.5)
+        ),
+        vec3(0.0, 0.0, focal_length)
+    )
+    
+    // Create scene
+    let spheres = List[Sphere]()
+    spheres.push(Sphere {
+        center: vec3(0.0, 0.0, -1.0),
+        radius: 0.5,
+        color: vec3(1.0, 0.0, 0.0)
+    })
+    spheres.push(Sphere {
+        center: vec3(-1.0, 0.0, -1.0),
+        radius: 0.5,
+        color: vec3(0.0, 1.0, 0.0)
+    })
+    spheres.push(Sphere {
+        center: vec3(1.0, 0.0, -1.0),
+        radius: 0.5,
+        color: vec3(0.0, 0.0, 1.0)
+    })
+    spheres.push(Sphere {
+        center: vec3(0.0, -100.5, -1.0),
+        radius: 100.0,
+        color: vec3(0.5, 0.5, 0.5)
+    })
+    
+    // Render
+    let ppm = "P3\n" + WIDTH.to_string() + " " + HEIGHT.to_string() + "\n255\n"
+    
+    for j in HEIGHT..0 {
+        for i in 0..WIDTH {
+            let u = i / (WIDTH - 1)
+            let v = j / (HEIGHT - 1)
+            
+            let ray_direction = add(
+                add(
+                    lower_left_corner,
+                    mul(horizontal, u)
+                ),
+                mul(vertical, v)
+            )
+            
+            let ray = Ray {
+                origin: camera_origin,
+                direction: ray_direction
+            }
+            
+            let color = ray_color(ray, spheres, 3)
+            
+            let r = (255.99 * color.x).floor()
+            let g = (255.99 * color.y).floor()
+            let b = (255.99 * color.z).floor()
+            
+            ppm = ppm + r.to_string() + " " + g.to_string() + " " + b.to_string() + "\n"
+        }
+    }
+    
+    fs.write_file("output.ppm", ppm)
+    println("Imagem salva em output.ppm")
+}

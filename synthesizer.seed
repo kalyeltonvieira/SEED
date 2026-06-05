@@ -1,0 +1,196 @@
+module synthesizer
+
+import stdlib.io
+import stdlib.fs
+import stdlib.collections
+import stdlib.string
+
+type Candidate = {
+    code: string
+    score: float
+    source: string
+    tests: Array[string]
+    explanation: string
+}
+
+type Intent = {
+    name: string
+    input_shape: string
+    output_shape: string
+    properties: Array[string]
+    keywords: Array[string]
+}
+
+type SynthesisResult = {
+    intent: Intent
+    candidates: Array[Candidate]
+    selected: Candidate
+    report: string
+}
+
+fn property_tests_for(intent: Intent) -> Array[string] {
+    let tests = Array[string]()
+    if intent.name == "sort" {
+        tests.push("saida ordenada")
+        tests.push("saida contem os mesmos elementos da entrada")
+        tests.push("lista vazia continua vazia")
+        tests.push("lista com repetidos preserva multiplicidade")
+    } else if intent.name == "parse_json" {
+        tests.push("objeto valido retorna Result.ok")
+        tests.push("json invalido retorna Result.err")
+    } else if intent.name == "hash" {
+        tests.push("mesma entrada gera mesmo hash")
+        tests.push("hash nao altera entrada")
+    } else if intent.name == "http_get" {
+        tests.push("timeout obrigatorio")
+        tests.push("url invalida retorna erro")
+    } else {
+        tests.push("codigo compila")
+        tests.push("falhas sao explicadas")
+    }
+    return tests
+}
+
+fn keyword_overlap(a: Array[string], b: Array[string]) -> float {
+    if a.len == 0 || b.len == 0 { return 0.0 }
+    let shared = 0
+    for item in a {
+        if b.contains(item) { shared = shared + 1 }
+    }
+    return shared / max(a.len, b.len)
+}
+
+fn infer_intent(description: string) -> Intent {
+    let d = description.lower()
+    if d.contains("ordena") || d.contains("ordenar") || d.contains("sort") {
+        return Intent(
+            "sort",
+            "[int]",
+            "[int]",
+            ["saida ordenada", "mesmos elementos da entrada", "termina"],
+            ["ordena", "ordenar", "sort", "lista", "numeros"]
+        )
+    }
+    if d.contains("hash") || d.contains("sha") || d.contains("resumo") {
+        return Intent(
+            "hash",
+            "bytes",
+            "bytes",
+            ["deterministico", "nao altera entrada"],
+            ["hash", "sha", "digest", "resumo"]
+        )
+    }
+    if d.contains("json") || d.contains("parse") {
+        return Intent(
+            "parse_json",
+            "string",
+            "dict",
+            ["aceita objetos validos", "rejeita entrada invalida com Result.err"],
+            ["json", "parse", "parser"]
+        )
+    }
+    if d.contains("http") || d.contains("baixar") || d.contains("download") {
+        return Intent(
+            "http_get",
+            "url",
+            "Result[string, error]",
+            ["sem envio a terceiros fora da URL pedida", "timeout obrigatorio"],
+            ["http", "get", "baixar", "download"]
+        )
+    }
+    return Intent(
+        "unknown",
+        "unknown",
+        "unknown",
+        ["deve compilar", "deve explicar falhas"],
+        description.words()
+    )
+}
+
+fn search_knowledge(description: string) -> Array[Candidate] {
+    let hits = Array[Candidate]()
+    let intent = infer_intent(description)
+    for row in knowledge.functions {
+        let score = similarity(description, row.description) + keyword_overlap(intent.keywords, row.tags)
+        if score > 0.35 {
+            hits.push(Candidate(row.code, score, row.name, row.tests, "Encontrado por similaridade em knowledge.functions."))
+        }
+    }
+    return hits.sort_by(c => -c.score)
+}
+
+fn compose(description: string, hits: Array[Candidate]) -> Candidate {
+    let intent = infer_intent(description)
+    if intent.name == "sort" {
+        return Candidate(
+            knowledge.functions["sort.timsort"].code,
+            0.95,
+            "knowledge.sort.timsort",
+            property_tests_for(intent),
+            "Timsort escolhido por estabilidade e bom desempenho em dados parcialmente ordenados."
+        )
+    }
+    if intent.name == "parse_json" {
+        return Candidate(
+            templates["parser.result"].adapt({ name: "parse_json", output: "Dict[String,Value]" }),
+            0.73,
+            "template.parser.result",
+            property_tests_for(intent),
+            "Parser gerado com Result para nao esconder erro de entrada invalida."
+        )
+    }
+    if hits.len > 0 {
+        return Candidate(
+            adapt(hits[0].code, description),
+            hits[0].score,
+            hits[0].source,
+            hits[0].tests + property_tests_for(intent),
+            "Adaptado do candidato mais parecido."
+        )
+    }
+    return Candidate(
+        "fn generated() -> Result[Unit,String] { return err(\"SEED ainda nao conhece esse padrao\") }",
+        0.10,
+        "fallback",
+        ["generated() retorna erro explicavel"],
+        "Fallback seguro: compila, mas nao finge conhecer o dominio."
+    )
+}
+
+fn diversify(candidate: Candidate, intent: Intent) -> Array[Candidate] {
+    let variants = Array[Candidate]()
+    variants.push(candidate)
+    for code in mutate_many(candidate.code, 16) {
+        variants.push(Candidate(code, candidate.score * 0.90, "variant:" + candidate.source, candidate.tests, "Variacao sintetica testada por propriedades."))
+    }
+    if intent.name == "sort" {
+        variants.push(Candidate(knowledge.functions["sort.merge"].code, 0.86, "knowledge.sort.merge", property_tests_for(intent), "Merge sort e previsivel e estavel."))
+        variants.push(Candidate(knowledge.functions["sort.quick"].code, 0.80, "knowledge.sort.quick", property_tests_for(intent), "Quicksort e rapido em media, mas instavel."))
+    }
+    return variants
+}
+
+fn synthesize(description: string) -> SynthesisResult {
+    let intent = infer_intent(description)
+    let hits = search_knowledge(description)
+    let seed = compose(description, hits)
+    let variants = diversify(seed, intent)
+    let passing = variants.filter(v => run_tests(v.code, v.tests))
+    let selected = seed
+    if passing.len > 0 {
+        selected = passing.sort_by(v => -fitness(v.code))[0]
+    }
+    return SynthesisResult(
+        intent,
+        variants,
+        selected,
+        "Intento: " + intent.name + "\nSelecionado: " + selected.source + "\nMotivo: " + selected.explanation
+    )
+}
+
+fn main(args) {
+    let description = args.join(" ")
+    let result = synthesize(description)
+    io.print(result.report + "\n")
+    io.print(result.selected.code + "\n")
+}

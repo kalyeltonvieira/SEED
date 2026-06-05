@@ -1,0 +1,181 @@
+module seedfmt
+
+import stdlib.io
+import stdlib.fs
+import stdlib.string
+import stdlib.cli
+
+/// Formatador de Código SEED
+/// Formata arquivos .seed com indentação consistente, espaçamento e ordenação
+
+type FormatConfig = {
+    indent_size: int
+    indent_style: string
+    max_line_length: int
+    sort_imports: bool
+    remove_trailing_whitespace: bool
+}
+
+fn default_config() -> FormatConfig {
+    return FormatConfig(4, "spaces", 100, true, true)
+}
+
+fn format_file(path: string, config: FormatConfig) -> string {
+    let source = fs.read_file(path)
+    let lines = source.split("\n")
+    let formatted = []
+    let indent_level = 0
+    let in_multiline_comment = false
+    let in_string = false
+    let string_char = ('"'
+    
+    for line in lines {
+        let trimmed = line.trim()
+        let original_indent = line.len() - line.trim_start().len()
+        
+        // Skip empty lines but preserve them
+        if trimmed.is_empty() {
+            formatted.push("")
+            continue
+        }
+        
+        // Handle multiline comments
+        if trimmed.starts_with("/*") {
+            in_multiline_comment = true
+            formatted.push(trimmed)
+            continue
+        }
+        if trimmed.ends_with("*/") {
+            in_multiline_comment = false
+            formatted.push(trimmed)
+            continue
+        }
+        if in_multiline_comment {
+            formatted.push(trimmed)
+            continue
+        }
+        
+        // Track string literals
+        if !in_string && (trimmed.contains('"') || trimmed.contains("'")) {
+            in_string = true
+            string_char = if trimmed.contains('"') { '"' } else { "'" }
+        } else if in_string && trimmed.contains(string_char) {
+            in_string = false
+        }
+        
+        // Calculate new indent
+        if !in_string && !in_multiline_comment {
+            if trimmed.starts_with("}") || trimmed.starts_with("]") || trimmed.starts_with(")") {
+                indent_level = math.max(0, indent_level - 1)
+            }
+        }
+        
+        // Apply indentation
+        let new_indent = "    " * indent_level
+        let formatted_line = new_indent + trimmed
+        
+        // Remove trailing whitespace
+        let final_line = if config.remove_trailing_whitespace {
+            formatted_line.trim_end()
+        } else {
+            formatted_line
+        }
+        
+        formatted.push(final_line)
+        
+        // Update indent for next line
+        if !in_string && !in_multiline_comment {
+            if trimmed.ends_with("{") || trimmed.ends_with("[") || trimmed.ends_with("(") {
+                indent_level = indent_level + 1
+            }
+        }
+    
+    
+    // Join lines
+    let result = formatted.join("\n")
+    
+    // Sort imports if enabled
+    if config.sort_imports {
+        result = sort_imports(result)
+    }
+    
+    return result
+
+
+fn sort_imports(source: string) -> string {
+    let lines = source.split("\n")
+    let imports = []
+    let other_lines = []
+    let in_import_block = false
+    
+    for line in lines {
+        if line.trim().starts_with("import ") {
+            imports.push(line)
+            in_import_block = true
+        } else if in_import_block && line.trim().is_empty() {
+            imports.push(line)
+        } else {
+            if in_import_block {
+                in_import_block = false
+            }
+            other_lines.push(line)
+        }
+    }
+    
+    // Sort imports alphabetically
+    let sorted_imports = imports.sort()
+    
+    // Combine
+    return sorted_imports.join("\n") + "\n" + other_lines.join("\n")
+}
+
+fn format_directory(dir: string, config: FormatConfig) {
+    let files = fs.list_dir(dir)
+    for file in files {
+        let path = dir + "\\" + file
+        if file.ends_with(".seed") {
+            let formatted = format_file(path, config)
+            let original = fs.read_file(path)
+            if formatted != original {
+                fs.write_file(path, formatted)
+                println("Formatted: " + file)
+            }
+        } else if fs.metadata(path).is_dir {
+            format_directory(path, config)
+        }
+    }
+}
+
+fn main(args: [string]) {
+    let config = default_config()
+    let path = "."
+    
+    // Parse arguments
+    for i in 0..args.len {
+        if args[i] == "--indent" && i + 1 < args.len {
+            config.indent_size = args[i + 1].to_int()
+        } else if args[i] == "--check" {
+            config.sort_imports = false
+        } else if !args[i].starts_with("-") {
+            path = args[i]
+        }
+    }
+    
+    println("SEED Formatter v1.0")
+    println("Formatting: " + path)
+    
+    if fs.metadata(path).is_file {
+        let formatted = format_file(path, config)
+        let original = fs.read_file(path)
+        if formatted != original {
+            fs.write_file(path, formatted)
+            println("Formatted: " + path)
+        } else {
+            println("Already formatted: " + path)
+        }
+    } else {
+        format_directory(path, config)
+    }
+    
+    println("Done!")
+}

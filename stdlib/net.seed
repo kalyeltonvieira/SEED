@@ -1,0 +1,127 @@
+module stdlib.net
+
+type Response = {
+    status: int
+    headers: dict
+    body: string
+}
+
+type Request = {
+    method: string
+    url: string
+    headers: dict
+    body: string
+}
+
+type Error = {
+    message: string
+    code: int
+}
+
+type WebSocket = {
+    url: string
+    state: string
+}
+
+type TcpStream = {
+    addr: string
+}
+
+type TcpListener = {
+    addr: string
+}
+
+type UdpSocket = {
+    addr: string
+}
+
+// HTTP Client
+/// Requisição GET
+fn get(url: string) -> Result[Response, Error] {
+    return syscall.http_get(url)
+}
+
+/// POST
+fn post(url: string, body: string) -> Result[Response, Error] {
+    return syscall.http_post(url, body)
+}
+
+/// PUT
+fn put(url: string, body: string) -> Result[Response, Error] {
+    return syscall.http_put(url, body)
+}
+
+/// DELETE
+fn delete(url: string) -> Result[Response, Error] {
+    return syscall.http_delete(url)
+}
+
+/// Requisição genérica
+fn request(method: string, url: string, headers: dict, body: string) -> Result[Response, Error] {
+    return syscall.http_request(method, url, headers, body)
+}
+
+// HTTP Server
+/// Inicia servidor
+fn serve(port: int, handler: fn(Request) -> Response) {
+    syscall.http_serve(port, handler)
+}
+
+type Router = {
+    routes: dict
+}
+
+/// Cria roteador
+fn Router() -> Router {
+    return Router(dict())
+}
+
+fn get(router: Router, path: string, handler: fn(Request) -> Response) {
+    router.routes["GET:" + path] = handler
+}
+
+fn post(router: Router, path: string, handler: fn(Request) -> Response) {
+    router.routes["POST:" + path] = handler
+}
+
+fn use(router: Router, middleware: fn(Request, Next) -> Response) {
+    router.routes["MIDDLEWARE"] = middleware
+}
+
+type Next = {
+    fn() -> Response
+}
+
+// WebSocket
+/// Conecta
+fn connect(url: string) -> WebSocket {
+    return WebSocket(url, "connecting")
+}
+
+fn send(ws: WebSocket, message: string) {
+    syscall.ws_send(ws, message)
+}
+
+fn on_message(ws: WebSocket, handler: fn(string)) {
+    syscall.ws_on_message(ws, handler)
+}
+
+fn close(ws: WebSocket) {
+    syscall.ws_close(ws)
+}
+
+// TCP/UDP
+/// Conecta TCP
+fn tcp_connect(addr: string) -> Result[TcpStream, Error] {
+    return syscall.tcp_connect(addr)
+}
+
+/// Escuta TCP
+fn tcp_listen(addr: string) -> Result[TcpListener, Error] {
+    return syscall.tcp_listen(addr)
+}
+
+/// Bind UDP
+fn udp_bind(addr: string) -> Result[UdpSocket, Error] {
+    return syscall.udp_bind(addr)
+}

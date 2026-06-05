@@ -1,0 +1,328 @@
+module compiler
+
+import compiler.lexer
+import compiler.parser
+import compiler.typechecker
+import compiler.codegen
+
+/// Orquestrador do Compilador SEED
+/// Junta lexer, parser, typechecker e codegen
+
+type Compiler = {
+    source: string
+    file_path: string
+    tokens: [Token]
+    ast: ASTNode
+    typed_ast: ASTNode
+    bytecode: [Instruction]
+    constants: [any]
+    errors: [string]
+    warnings: [string]
+    options: CompilerOptions
+}
+
+type CompilerOptions = {
+    optimize: bool
+    debug: bool
+    output_path: string
+    target: string
+}
+
+type CompilationResult = {
+    success: bool
+    bytecode: [int]
+    constants: [any]
+    errors: [string]
+    warnings: [string]
+}
+
+fn compiler(source: string, file_path: string) -> Compiler {
+    return Compiler {
+        source: source,
+        file_path: file_path,
+        tokens: [],
+        ast: null,
+        typed_ast: null,
+        bytecode: [],
+        constants: [],
+        errors: [],
+        warnings: [],
+        options: CompilerOptions {
+            optimize: true,
+            debug: false,
+            output_path: "",
+            target: "bytecode"
+        }
+    }
+}
+
+fn compile(c: Compiler) -> CompilationResult {
+    println("Compilando: " + c.file_path)
+    
+    // Phase 1: Lexing
+    println("  [1/4] Lexical analysis...")
+    let (tokens, lex_errors) = lexer.tokenize(c.source)
+    c.tokens = tokens
+    c.errors = c.errors + lex_errors
+    
+    if c.errors.len > 0 {
+        println("  Erros léxicos: " + c.errors.len.to_string())
+        for err in c.errors {
+            println("    " + err)
+        }
+        return CompilationResult {
+            success: false,
+            bytecode: [],
+            constants: [],
+            errors: c.errors,
+            warnings: c.warnings
+        }
+    }
+    println("  OK")
+    
+    // Phase 2: Parsing
+    println("  [2/4] Syntax analysis...")
+    let p = parser(tokens)
+    c.ast = parse(p)
+    
+    if p.errors.len > 0 {
+        c.errors = c.errors + p.errors
+        println("  Erros sintáticos: " + p.errors.len.to_string())
+        for err in p.errors {
+            println("    " + err)
+        }
+        return CompilationResult {
+            success: false,
+            bytecode: [],
+            constants: [],
+            errors: c.errors,
+            warnings: c.warnings
+        }
+    }
+    println("  OK")
+    
+    // Phase 3: Type checking
+    println("  [3/4] Type checking...")
+    let (typed_ast, type_errors) = typechecker.typechecker(c.ast)
+    c.typed_ast = typed_ast
+    c.errors = c.errors + type_errors.map(e => e.message)
+    
+    if type_errors.len > 0 {
+        println("  Erros de tipo: " + type_errors.len.to_string())
+        for err in type_errors {
+            println("    " + err.message + " (linha " + err.line.to_string() + ")")
+        }
+        return CompilationResult {
+            success: false,
+            bytecode: [],
+            constants: [],
+            errors: c.errors,
+            warnings: c.warnings
+        }
+    }
+    println("  OK")
+    
+    // Phase 4: Code generation
+    println("  [4/4] Code generation...")
+    let cg = codegen.codegen(c.options.optimize)
+    c.bytecode = codegen.generate(cg, c.typed_ast)
+    c.constants = cg.constants
+    
+    if c.options.debug {
+        println("\n  Bytecode:")
+        println(codegen.disassemble(cg))
+    }
+    
+    println("  OK")
+    
+    let bytecode = codegen.serialize_bytecode(cg)
+    
+    return CompilationResult {
+        success: true,
+        bytecode: bytecode,
+        constants: c.constants,
+        errors: [],
+        warnings: c.warnings
+    }
+}
+
+fn compile_file(path: string, options: CompilerOptions) -> CompilationResult {
+    if !fs.file_exists(path) {
+        return CompilationResult {
+            success: false,
+            bytecode: [],
+            constants: [],
+            errors: ["Arquivo não encontrado: " + path],
+            warnings: []
+        }
+    }
+    
+    let source = fs.read_file(path)
+    let c = compiler(source, path)
+    c.options = options
+    
+    return compile(c)
+}
+
+fn compile_project(dir: string, options: CompilerOptions) -> CompilationResult {
+    println("Compilando projeto: " + dir)
+    
+    let files = []
+    let items = fs.list_dir(dir)
+    
+    for item in items {
+        if item.ends_with(".seed") {
+            files.push(dir + "\\" + item)
+        }
+    }
+    
+    let all_bytecode = []
+    let all_constants = []
+    let all_errors = []
+    
+    for file in files {
+        let result = compile_file(file, options)
+        
+        if !result.success {
+            all_errors = all_errors + result.errors
+        } else {
+            all_bytecode = all_bytecode + result.bytecode
+            all_constants = all_constants + result.constants
+        }
+    }
+    
+    if all_errors.len > 0 {
+        return CompilationResult {
+            success: false,
+            bytecode: [],
+            constants: [],
+            errors: all_errors,
+            warnings: []
+        }
+    }
+    
+    // Link all bytecode
+    let linked = link(all_bytecode, all_constants)
+    
+    return CompilationResult {
+        success: true,
+        bytecode: linked.bytecode,
+        constants: linked.constants,
+        errors: [],
+        warnings: []
+    }
+}
+
+type LinkedBytecode = {
+    bytecode: [int]
+    constants: [any]
+}
+
+fn link(bytecodes: [[int]], constants: [[any]]) -> LinkedBytecode {
+    let linked_bytecode = []
+    let linked_constants = []
+    let offset = 0
+    
+    for bytecode in bytecodes {
+        linked_bytecode = linked_bytecode + bytecode
+        offset = offset + bytecode.len
+    }
+    
+    for consts in constants {
+        linked_constants = linked_constants + consts
+    }
+    
+    return LinkedBytecode {
+        bytecode: linked_bytecode,
+        constants: linked_constants
+    }
+}
+
+fn write_output(result: CompilationResult, path: string) {
+    if !result.success {
+        return
+    }
+    
+    let output_path = if path.is_empty() { "output.bin" } else { path }
+    
+    // Write bytecode
+    let bytecode_data = ""
+    for byte in result.bytecode {
+        bytecode_data = bytecode_data + byte.to_char()
+    }
+    fs.write_file(output_path, bytecode_data)
+    
+    // Write constants
+    let constants_path = output_path + ".const"
+    let constants_json = json.stringify(json.array(result.constants.map(c => json.string(c.to_string())))).unwrap()
+    fs.write_file(constants_path, constants_json)
+    
+    println("Output escrito em: " + output_path)
+}
+
+fn print_diagnostics(result: CompilationResult) {
+    if result.errors.len > 0 {
+        println("\nErros:")
+        for err in result.errors {
+            println("  " + err)
+        }
+    }
+    
+    if result.warnings.len > 0 {
+        println("\nWarnings:")
+        for warn in result.warnings {
+            println("  " + warn)
+        }
+    }
+}
+
+fn main(args: [string]) {
+    let options = CompilerOptions {
+        optimize: true,
+        debug: false,
+        output_path: "",
+        target: "bytecode"
+    }
+    
+    let path = ""
+    
+    for i in 0..args.len {
+        if args[i] == "--optimize" {
+            options.optimize = true
+        } else if args[i] == "--no-optimize" {
+            options.optimize = false
+        } else if args[i] == "--debug" {
+            options.debug = true
+        } else if args[i] == "--output" && i + 1 < args.len {
+            options.output_path = args[i + 1]
+        } else if !args[i].starts_with("-") {
+            path = args[i]
+        }
+    }
+    
+    if path.is_empty() {
+        println("Uso: seed compiler <arquivo|diretório> [opções]")
+        println("Opções:")
+        println("  --optimize        Ativa otimizações")
+        println("  --no-optimize     Desativa otimizações")
+        println("  --debug           Modo debug")
+        println("  --output <path>   Caminho de saída")
+        os.exit(1)
+    }
+    
+    let result = if fs.metadata(path).is_dir {
+        compile_project(path, options)
+    } else {
+        compile_file(path, options)
+    }
+    
+    print_diagnostics(result)
+    
+    if result.success {
+        write_output(result, options.output_path)
+        println("\nCompilação concluída com sucesso!")
+    } else {
+        println("\nCompilação falhou.")
+        os.exit(1)
+    }
+}

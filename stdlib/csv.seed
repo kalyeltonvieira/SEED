@@ -1,0 +1,242 @@
+module stdlib.csv
+
+/// Parser e gerador de CSV
+
+type CSVReader = {
+    data: string
+    position: int
+    delimiter: string
+    has_header: bool
+    headers: [string]
+}
+
+type CSVWriter = {
+    buffer: string
+    delimiter: string
+}
+
+fn csv_reader(data: string, delimiter: string, has_header: bool) -> CSVReader {
+    let reader = CSVReader {
+        data: data,
+        position: 0,
+        delimiter: delimiter,
+        has_header: has_header,
+        headers: []
+    }
+    
+    if has_header {
+        reader.headers = read_row(reader)
+    }
+    
+    return reader
+}
+
+fn read_row(reader: CSVReader) -> [string] {
+    let row = []
+    let field = ""
+    let in_quotes = false
+    
+    while reader.position < reader.data.len {
+        let c = reader.data[reader.position]
+        
+        if c == ('"' as char) {
+            in_quotes = !in_quotes
+        } else if c == reader.delimiter && !in_quotes {
+            row.push(field)
+            field = ""
+        } else if c == ('\n' as char) && !in_quotes {
+            row.push(field)
+            reader.position = reader.position + 1
+            return row
+        } else {
+            field = field + c
+        }
+        
+        reader.position = reader.position + 1
+    }
+    
+    if field.len > 0 {
+        row.push(field)
+    }
+    
+    return row
+}
+
+fn read_all(reader: CSVReader) -> [[string]] {
+    let rows = []
+    
+    while reader.position < reader.data.len {
+        let row = read_row(reader)
+        if row.len > 0 {
+            rows.push(row)
+        }
+    }
+    
+    return rows
+}
+
+fn read_dict(reader: CSVReader) -> [dict] {
+    let dicts = []
+    
+    while reader.position < reader.data.len {
+        let row = read_row(reader)
+        if row.len > 0 {
+            let d = dict()
+            for i in 0..row.len {
+                if i < reader.headers.len {
+                    d[reader.headers[i]] = row[i]
+                }
+            }
+            dicts.push(d)
+        }
+    }
+    
+    return dicts
+}
+
+fn csv_writer(delimiter: string) -> CSVWriter {
+    return CSVWriter {
+        buffer: "",
+        delimiter: delimiter
+    }
+}
+
+fn write_row(writer: CSVWriter, row: [string]) {
+    let fields = []
+    
+    for field in row {
+        if field.contains(writer.delimiter) || field.contains("\"") || field.contains("\n") {
+            let escaped = field.replace("\"", "\"\"")
+            fields.push("\"" + escaped + "\"")
+        } else {
+            fields.push(field)
+        }
+    }
+    
+    writer.buffer = writer.buffer + fields.join(writer.delimiter) + "\n"
+}
+
+fn write_header(writer: CSVWriter, headers: [string]) {
+    write_row(writer, headers)
+}
+
+fn write_dict(writer: CSVWriter, d: dict, headers: [string]) {
+    let row = []
+    for header in headers {
+        row.push(d.get(header, ""))
+    }
+    write_row(writer, row)
+}
+
+fn to_string(writer: CSVWriter) -> string {
+    return writer.buffer
+}
+
+fn save(writer: CSVWriter, path: string) {
+    fs.write_file(path, writer.buffer)
+}
+
+// Utility functions
+fn parse_csv(data: string) -> [[string]] {
+    let reader = csv_reader(data, ",", false)
+    return read_all(reader)
+}
+
+fn parse_csv_with_header(data: string) -> ([string], [[string]]) {
+    let reader = csv_reader(data, ",", true)
+    let rows = read_all(reader)
+    return (reader.headers, rows)
+}
+
+fn generate_csv(rows: [[string]]) -> string {
+    let writer = csv_writer(",")
+    for row in rows {
+        write_row(writer, row)
+    }
+    return to_string(writer)
+}
+
+fn generate_csv_with_header(headers: [string], rows: [[string]]) -> string {
+    let writer = csv_writer(",")
+    write_header(writer, headers)
+    for row in rows {
+        write_row(writer, row)
+    }
+    return to_string(writer)
+}
+
+// CSV from/to JSON
+fn csv_to_json(data: string) -> [json.Value] {
+    let (headers, rows) = parse_csv_with_header(data)
+    let objects = []
+    
+    for row in rows {
+        let pairs = []
+        for i in 0..headers.len {
+            if i < row.len {
+                pairs.push((headers[i], json.string(row[i])))
+            }
+        }
+        objects.push(json.object(pairs))
+    }
+    
+    return objects
+}
+
+fn json_to_csv(objects: [json.Value]) -> string {
+    if objects.len == 0 {
+        return ""
+    }
+    
+    let headers = objects[0].data.keys()
+    let writer = csv_writer(",")
+    write_header(writer, headers)
+    
+    for obj in objects {
+        let row = []
+        for header in headers {
+            let value = obj.data.get(header, json.string(""))
+            row.push(value.data)
+        }
+        write_row(writer, row)
+    }
+    
+    return to_string(writer)
+}
+
+// Streaming CSV
+type CSVStream = {
+    file: int
+    delimiter: string
+    buffer: string
+}
+
+fn csv_stream(path: string, delimiter: string) -> CSVStream {
+    let file = fs.open(path, "r")
+    return CSVStream {
+        file: file,
+        delimiter: delimiter,
+        buffer: ""
+    }
+}
+
+fn stream_next(stream: CSVStream) -> Option[[string]] {
+    let line = fs.read_line(stream.file)
+    if line.is_empty() {
+        return Option[[string]].None
+    }
+    
+    let reader = CSVReader {
+        data: line,
+        position: 0,
+        delimiter: stream.delimiter,
+        has_header: false,
+        headers: []
+    }
+    
+    return Option[[string]].Some(read_row(reader))
+}
+
+fn stream_close(stream: CSVStream) {
+    fs.close(stream.file)
+}

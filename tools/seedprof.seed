@@ -1,0 +1,261 @@
+module seedprof
+
+import stdlib.io
+import stdlib.time
+import stdlib.string
+import stdlib.cli
+
+/// Profiler for SEED programs
+type ProfileRecord = {
+    function: string
+    file: string
+    line: int
+    calls: int
+    total_time: float
+    self_time: float
+}
+
+type CallStack = {
+    records: [ProfileRecord]
+    stack: [string]
+}
+
+fn start_profiling() -> CallStack {
+    return CallStack {
+        records: [],
+        stack: []
+    }
+}
+
+fn enter_function(prof: CallStack, name: string, file: string, line: int) {
+    prof.stack.push(name)
+    
+    let existing = prof.records.find(r => r.function == name)
+    if existing != null {
+        existing.calls = existing.calls + 1
+    } else {
+        prof.records.push(ProfileRecord {
+            function: name,
+            file: file,
+            line: line,
+            calls: 1,
+            total_time: 0.0,
+            self_time: 0.0
+        })
+    }
+}
+
+fn exit_function(prof: CallStack, name: string, elapsed: float) {
+    prof.stack.pop()
+    
+    let record = prof.records.find(r => r.function == name)
+    if record != null {
+        record.total_time = record.total_time + elapsed
+    }
+}
+
+fn profile(fn: fn()) -> CallStack {
+    let prof = start_profiling()
+    let start = time.now()
+    
+    fn()
+    
+    let total = time.elapsed(start)
+    
+    // Calculate self time
+    for record in prof.records {
+        record.self_time = record.total_time
+    }
+    
+    return prof
+}
+
+fn print_report(prof: CallStack) {
+    println("\n" + cli.color("Profile Report", "cyan"))
+    println(cli.color("=" * 60, "white"))
+    
+    // Sort by total time
+    let sorted = prof.records.sort((a, b) => b.total_time - a.total_time)
+    
+    println(cli.color("Function".pad_right(30), "white") + " " + 
+          cli.color("Calls".pad_right(8), "white") + " " +
+          cli.color("Total (ms)".pad_right(12), "white") + " " +
+          cli.color("Self (ms)".pad_right(12), "white") + " " +
+          cli.color("%".pad_right(8), "white"))
+    
+    println(cli.color("-" * 60, "white"))
+    
+    let total_time = sorted.reduce((a, b) => a + b.total_time, 0.0)
+    
+    for record in sorted {
+        let percent = (record.total_time / total_time * 100).to_string().substring(0, 5)
+        
+        println(record.function.pad_right(30) + " " + 
+              record.calls.to_string().pad_right(8) + " " +
+              record.total_time.to_string().pad_right(12) + " " +
+              record.self_time.to_string().pad_right(12) + " " +
+              percent.pad_right(8))
+    }
+    
+    println(cli.color("-" * 60, "white"))
+    println("Total: " + total_time.to_string() + " ms")
+}
+
+fn flame_graph(prof: CallStack) -> string {
+    let lines = []
+    
+    for record in prof.records {
+        let width = (record.total_time * 100).to_int()
+        let line = record.function + " " + "█" * width
+        lines.push(line)
+    }
+    
+    return lines.join("\n")
+}
+
+fn call_graph(prof: CallStack) -> string {
+    let graph = "digraph profile {\n"
+    
+    for record in prof.records {
+        graph = graph + "  \"" + record.function + "\";\n"
+    }
+    
+    graph = graph + "}\n"
+    return graph
+}
+
+fn memory_profile(fn: fn()) -> [int] {
+    let samples = []
+    let interval = 10 // ms
+    
+    let running = true
+    let start = time.now()
+    
+    // Start sampling thread
+    spawn(fn() {
+        while running {
+            samples.push(os.memory_used())
+            time.sleep(interval)
+        }
+    })
+    
+    fn()
+    
+    running = false
+    time.sleep(interval * 2)
+    
+    return samples
+}
+
+fn print_memory_profile(samples: [int]) {
+    println("\n" + cli.color("Memory Profile", "cyan"))
+    println(cli.color("=" * 60, "white"))
+    
+    let max = samples.reduce((a, b) => if a > b { a } else { b }, 0)
+    let min = samples.reduce((a, b) => if a < b { a } else { b }, samples[0])
+    let avg = samples.reduce((a, b) => a + b, 0) / samples.len
+    
+    println("Max: " + max.to_string() + " bytes")
+    println("Min: " + min.to_string() + " bytes")
+    println("Avg: " + avg.to_string() + " bytes")
+    println("Samples: " + samples.len.to_string())
+}
+
+fn cpu_profile(fn: fn()) -> [float] {
+    let samples = []
+    let interval = 10 // ms
+    
+    let running = true
+    
+    spawn(fn() {
+        while running {
+            samples.push(os.cpu_usage())
+            time.sleep(interval)
+        }
+    })
+    
+    fn()
+    
+    running = false
+    time.sleep(interval * 2)
+    
+    return samples
+}
+
+fn print_cpu_profile(samples: [float]) {
+    println("\n" + cli.color("CPU Profile", "cyan"))
+    println(cli.color("=" * 60, "white"))
+    
+    let max = samples.reduce((a, b) => if a > b { a } else { b }, 0.0)
+    let min = samples.reduce((a, b) => if a < b { a } else { b }, samples[0])
+    let avg = samples.reduce((a, b) => a + b, 0.0) / samples.len
+    
+    println("Max: " + max.to_string() + "%")
+    println("Min: " + min.to_string() + "%")
+    println("Avg: " + avg.to_string() + "%")
+    println("Samples: " + samples.len.to_string())
+}
+
+fn main(args: [string]) {
+    let mode = "cpu"
+    let output = "console"
+    
+    for i in 0..args.len {
+        if args[i] == "--mode" && i + 1 < args.len {
+            mode = args[i + 1]
+        } else if args[i] == "--output" && i + 1 < args.len {
+            output = args[i + 1]
+        }
+    }
+    
+    println("SEED Profiler v1.0")
+    println("Mode: " + mode)
+    println("Output: " + output)
+    println("")
+    
+    // Example profiling
+    let test_fn = fn() {
+        let sum = 0
+        for i in 0..10000 {
+            sum = sum + i
+        }
+        
+        let arr = []
+        for i in 0..1000 {
+            arr.push(i)
+        }
+        
+        for i in 0..100 {
+            math.sqrt(i)
+        }
+    }
+    
+    match mode {
+        "cpu" => {
+            let samples = cpu_profile(test_fn)
+            print_cpu_profile(samples)
+        }
+        "memory" => {
+            let samples = memory_profile(test_fn)
+            print_memory_profile(samples)
+        }
+        "function" => {
+            let prof = profile(test_fn)
+            print_report(prof)
+        }
+        "flame" => {
+            let prof = profile(test_fn)
+            println(flame_graph(prof))
+        }
+        "graph" => {
+            let prof = profile(test_fn)
+            println(call_graph(prof))
+        }
+        _ => {
+            println("Unknown mode: " + mode)
+            os.exit(1)
+        }
+    }
+    
+    println("\nDone!")
+}

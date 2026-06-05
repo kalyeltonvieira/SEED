@@ -1,0 +1,674 @@
+module stdlib.render3d
+
+// RENDER3D.SEED - Motor de Renderizacao 3D
+// Simplificado para o transpilador rudimentar.
+
+// ============================================================
+// TIPOS BASICOS
+// ============================================================
+
+struct Vec2 {
+    x: float
+    y: float
+}
+
+struct Vec3 {
+    x: float
+    y: float
+    z: float
+}
+
+struct Mat4 {
+    data: [float]
+}
+
+struct Color {
+    r: float
+    g: float
+    b: float
+    a: float
+}
+
+struct Vertex {
+    position: Vec3
+    normal: Vec3
+    uv: Vec2
+    color: Color
+}
+
+struct Triangle {
+    v0: Vertex
+    v1: Vertex
+    v2: Vertex
+}
+
+struct Mesh {
+    triangles: [Triangle]
+    name: string
+}
+
+struct Transform {
+    position: Vec3
+    rotation: Vec3
+    scale: Vec3
+}
+
+struct Camera {
+    position: Vec3
+    target: Vec3
+    up: Vec3
+    fov: float
+    z_near: float
+    z_far: float
+}
+
+struct Light {
+    position: Vec3
+    color: Color
+    intensity: float
+}
+
+struct Material {
+    ambient: Color
+    diffuse: Color
+    specular: Color
+    shininess: float
+}
+
+struct SceneObject {
+    mesh: Mesh
+    transform: Transform
+    material: Material
+}
+
+struct Framebuffer {
+    width: int
+    height: int
+    pixels: [Color]
+    depth: [float]
+}
+
+struct Scene {
+    meshes: [SceneObject]
+    lights: [Light]
+    camera: Camera
+    ambient_color: Color
+}
+
+// ============================================================
+// OPERACOES COM VETORES
+// ============================================================
+
+pub fn vec3_new(x: float, y: float, z: float) -> Vec3 {
+    let mut v = Vec3();
+    v.x = x;
+    v.y = y;
+    v.z = z;
+    return v;
+}
+
+pub fn vec3_zero() -> Vec3 {
+    return vec3_new(0.0, 0.0, 0.0);
+}
+
+pub fn vec3_one() -> Vec3 {
+    return vec3_new(1.0, 1.0, 1.0);
+}
+
+pub fn vec3_add(a: Vec3, b: Vec3) -> Vec3 {
+    return vec3_new(a.x + b.x, a.y + b.y, a.z + b.z);
+}
+
+pub fn vec3_sub(a: Vec3, b: Vec3) -> Vec3 {
+    return vec3_new(a.x - b.x, a.y - b.y, a.z - b.z);
+}
+
+pub fn vec3_mul(v: Vec3, scalar: float) -> Vec3 {
+    return vec3_new(v.x * scalar, v.y * scalar, v.z * scalar);
+}
+
+pub fn vec3_div(v: Vec3, scalar: float) -> Vec3 {
+    return vec3_new(v.x / scalar, v.y / scalar, v.z / scalar);
+}
+
+pub fn vec3_dot(a: Vec3, b: Vec3) -> float {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+pub fn vec3_cross(a: Vec3, b: Vec3) -> Vec3 {
+    return vec3_new(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+}
+
+pub fn vec3_length(v: Vec3) -> float {
+    return math.sqrt(vec3_dot(v, v));
+}
+
+pub fn vec3_normalize(v: Vec3) -> Vec3 {
+    let len = vec3_length(v);
+    if (len > 0.0001) {
+        return vec3_div(v, len);
+    }
+    return vec3_zero();
+}
+
+pub fn vec3_lerp(a: Vec3, b: Vec3, t: float) -> Vec3 {
+    return vec3_add(vec3_mul(a, 1.0 - t), vec3_mul(b, t));
+}
+
+pub fn vec3_reflect(v: Vec3, normal: Vec3) -> Vec3 {
+    return vec3_sub(v, vec3_mul(normal, 2.0 * vec3_dot(v, normal)));
+}
+
+pub fn vec3_distance(a: Vec3, b: Vec3) -> float {
+    return vec3_length(vec3_sub(a, b));
+}
+
+// ============================================================
+// OPERACOES COM MATRIZES 4X4
+// ============================================================
+
+pub fn mat4_identity() -> Mat4 {
+    let mut m = Mat4();
+    for i in 0..16 {
+        m.data.push_back(0.0);
+    }
+    m.data[0] = 1.0;
+    m.data[5] = 1.0;
+    m.data[10] = 1.0;
+    m.data[15] = 1.0;
+    return m;
+}
+
+pub fn mat4_perspective(fov: float, aspect: float, z_near: float, z_far: float) -> Mat4 {
+    let f = 1.0 / math.tan(fov * 0.5);
+    let range_inv = 1.0 / (z_near - z_far);
+    
+    let mut m = Mat4();
+    for i in 0..16 {
+        m.data.push_back(0.0);
+    }
+    m.data[0] = f / aspect;
+    m.data[5] = f;
+    m.data[10] = (z_near + z_far) * range_inv;
+    m.data[11] = -1.0;
+    m.data[14] = z_near * z_far * range_inv * 2.0;
+    return m;
+}
+
+pub fn mat4_look_at(eye: Vec3, target: Vec3, up: Vec3) -> Mat4 {
+    let f = vec3_normalize(vec3_sub(target, eye));
+    let s = vec3_normalize(vec3_cross(f, up));
+    let u = vec3_cross(s, f);
+    
+    let mut m = Mat4();
+    for i in 0..16 {
+        m.data.push_back(0.0);
+    }
+    m.data[0] = s.x;
+    m.data[4] = s.y;
+    m.data[8] = s.z;
+    m.data[1] = u.x;
+    m.data[5] = u.y;
+    m.data[9] = u.z;
+    m.data[2] = -f.x;
+    m.data[6] = -f.y;
+    m.data[10] = -f.z;
+    m.data[12] = -vec3_dot(s, eye);
+    m.data[13] = -vec3_dot(u, eye);
+    m.data[14] = vec3_dot(f, eye);
+    m.data[15] = 1.0;
+    return m;
+}
+
+pub fn mat4_translation(v: Vec3) -> Mat4 {
+    let mut m = mat4_identity();
+    m.data[12] = v.x;
+    m.data[13] = v.y;
+    m.data[14] = v.z;
+    return m;
+}
+
+pub fn mat4_rotation_x(angle: float) -> Mat4 {
+    let c = math.cos(angle);
+    let s = math.sin(angle);
+    let mut m = mat4_identity();
+    m.data[5] = c;
+    m.data[6] = s;
+    m.data[9] = -s;
+    m.data[10] = c;
+    return m;
+}
+
+pub fn mat4_rotation_y(angle: float) -> Mat4 {
+    let c = math.cos(angle);
+    let s = math.sin(angle);
+    let mut m = mat4_identity();
+    m.data[0] = c;
+    m.data[2] = -s;
+    m.data[8] = s;
+    m.data[10] = c;
+    return m;
+}
+
+pub fn mat4_rotation_z(angle: float) -> Mat4 {
+    let c = math.cos(angle);
+    let s = math.sin(angle);
+    let mut m = mat4_identity();
+    m.data[0] = c;
+    m.data[1] = s;
+    m.data[4] = -s;
+    m.data[5] = c;
+    return m;
+}
+
+pub fn mat4_scale(v: Vec3) -> Mat4 {
+    let mut m = mat4_identity();
+    m.data[0] = v.x;
+    m.data[5] = v.y;
+    m.data[10] = v.z;
+    return m;
+}
+
+pub fn mat4_mul(a: Mat4, b: Mat4) -> Mat4 {
+    let mut m = Mat4();
+    for x in 0..16 {
+        m.data.push_back(0.0);
+    }
+    for i in 0..4 {
+        for j in 0..4 {
+            let mut sum = 0.0;
+            for k in 0..4 {
+                sum = sum + a.data[k * 4 + j] * b.data[i * 4 + k];
+            }
+            m.data[i * 4 + j] = sum;
+        }
+    }
+    return m;
+}
+
+pub fn mat4_transform_point(m: Mat4, v: Vec3) -> Vec3 {
+    let x = m.data[0] * v.x + m.data[4] * v.y + m.data[8] * v.z + m.data[12];
+    let y = m.data[1] * v.x + m.data[5] * v.y + m.data[9] * v.z + m.data[13];
+    let z = m.data[2] * v.x + m.data[6] * v.y + m.data[10] * v.z + m.data[14];
+    let w = m.data[3] * v.x + m.data[7] * v.y + m.data[11] * v.z + m.data[15];
+    
+    if (math.abs(w) > 0.0001) {
+        return vec3_new(x / w, y / w, z / w);
+    }
+    return vec3_new(x, y, z);
+}
+
+// ============================================================
+// TRANSFORM
+// ============================================================
+
+pub fn transform_matrix(t: Transform) -> Mat4 {
+    let translation = mat4_translation(t.position);
+    let rotation_x = mat4_rotation_x(t.rotation.x);
+    let rotation_y = mat4_rotation_y(t.rotation.y);
+    let rotation_z = mat4_rotation_z(t.rotation.z);
+    let scale = mat4_scale(t.scale);
+    
+    return mat4_mul(mat4_mul(mat4_mul(translation, rotation_z), rotation_y), mat4_mul(rotation_x, scale));
+}
+
+pub fn transform_new() -> Transform {
+    let mut t = Transform();
+    t.position = vec3_zero();
+    t.rotation = vec3_zero();
+    t.scale = vec3_one();
+    return t;
+}
+
+// ============================================================
+// CORES
+// ============================================================
+
+pub fn color_new(r: float, g: float, b: float, a: float) -> Color {
+    let mut c = Color();
+    c.r = r;
+    c.g = g;
+    c.b = b;
+    c.a = a;
+    return c;
+}
+
+pub fn color_white() -> Color {
+    return color_new(1.0, 1.0, 1.0, 1.0);
+}
+
+pub fn color_black() -> Color {
+    return color_new(0.0, 0.0, 0.0, 1.0);
+}
+
+pub fn color_mul(c: Color, scalar: float) -> Color {
+    return color_new(c.r * scalar, c.g * scalar, c.b * scalar, c.a);
+}
+
+pub fn color_mul_color(a: Color, b: Color) -> Color {
+    return color_new(a.r * b.r, a.g * b.g, a.b * b.b, a.a * b.a);
+}
+
+pub fn color_add(a: Color, b: Color) -> Color {
+    return color_new(a.r + b.r, a.g + b.g, a.b + b.b, a.a + b.a);
+}
+
+pub fn color_clamp(c: Color) -> Color {
+    return color_new(math.max(0.0, math.min(1.0, c.r)), math.max(0.0, math.min(1.0, c.g)), math.max(0.0, math.min(1.0, c.b)), math.max(0.0, math.min(1.0, c.a)));
+}
+
+// ============================================================
+// FRAMEBUFFER
+// ============================================================
+
+pub fn framebuffer_new(width: int, height: int) -> Framebuffer {
+    let mut fb = Framebuffer();
+    fb.width = width;
+    fb.height = height;
+    
+    let total = width * height;
+    for i in 0..total {
+        fb.pixels.push_back(color_black());
+        fb.depth.push_back(999999.0);
+    }
+    
+    return fb;
+}
+
+pub fn framebuffer_clear(fb: &mut Framebuffer, color: Color) -> void {
+    let len = fb.pixels.size();
+    for i in 0..len {
+        fb.pixels[i] = color;
+        fb.depth[i] = 999999.0;
+    }
+}
+
+pub fn framebuffer_set_pixel(fb: &mut Framebuffer, x: int, y: int, c: Color) -> void {
+    if x >= 0 { if x < fb.width { if y >= 0 { if y < fb.height {
+        fb.pixels[y * fb.width + x] = c;
+    }}}}
+}
+
+pub fn framebuffer_set_depth(fb: &mut Framebuffer, x: int, y: int, depth: float) -> bool {
+    if x >= 0 { if x < fb.width { if y >= 0 { if y < fb.height {
+        if depth < fb.depth[y * fb.width + x] {
+            fb.depth[y * fb.width + x] = depth;
+            return true;
+        }
+    }}}}
+    return false;
+}
+
+// ============================================================
+// RASTERIZACAO
+// ============================================================
+
+pub fn edge_function(a: Vec2, b: Vec2, c: Vec2) -> float {
+    return (c.x - a.x) * (b.y - a.y) - (c.y - a.y) * (b.x - a.x);
+}
+
+pub fn draw_triangle(fb: &mut Framebuffer, v0: Vec3, v1: Vec3, v2: Vec3, c0: Color, c1: Color, c2: Color) -> void {
+    let half_w = fb.width * 0.5;
+    let half_h = fb.height * 0.5;
+    
+    let mut p0 = Vec2();
+    p0.x = (v0.x + 1.0) * half_w; p0.y = (1.0 - v0.y) * half_h;
+    let mut p1 = Vec2();
+    p1.x = (v1.x + 1.0) * half_w; p1.y = (1.0 - v1.y) * half_h;
+    let mut p2 = Vec2();
+    p2.x = (v2.x + 1.0) * half_w; p2.y = (1.0 - v2.y) * half_h;
+    
+    let mut min_x = math.min(p0.x, math.min(p1.x, p2.x));
+    let mut max_x = math.max(p0.x, math.max(p1.x, p2.x));
+    let mut min_y = math.min(p0.y, math.min(p1.y, p2.y));
+    let mut max_y = math.max(p0.y, math.max(p1.y, p2.y));
+    
+    if (min_x < 0.0) { min_x = 0.0; }
+    if (max_x > fb.width - 1.0) { max_x = fb.width - 1.0; }
+    if (min_y < 0.0) { min_y = 0.0; }
+    if (max_y > fb.height - 1.0) { max_y = fb.height - 1.0; }
+    
+    let area = edge_function(p0, p1, p2);
+    if (math.abs(area) < 0.0001) {
+        return;
+    }
+    
+    let imin_y = min_y;
+    let imax_y = max_y;
+    let imin_x = min_x;
+    let imax_x = max_x;
+    
+    for y in imin_y..imax_y {
+        for x in imin_x..imax_x {
+            let mut p = Vec2();
+            p.x = x + 0.5; p.y = y + 0.5;
+            
+            let w0 = edge_function(p1, p2, p) / area;
+            let w1 = edge_function(p2, p0, p) / area;
+            let w2 = edge_function(p0, p1, p) / area;
+            
+            if w0 >= 0.0 { if w1 >= 0.0 { if w2 >= 0.0 {
+                let z = v0.z * w0 + v1.z * w1 + v2.z * w2;
+                if framebuffer_set_depth(fb, x, y, z) {
+                    let mut px_c = Color();
+                    px_c.r = c0.r * w0 + c1.r * w1 + c2.r * w2;
+                    px_c.g = c0.g * w0 + c1.g * w1 + c2.g * w2;
+                    px_c.b = c0.b * w0 + c1.b * w1 + c2.b * w2;
+                    px_c.a = c0.a * w0 + c1.a * w1 + c2.a * w2;
+                    framebuffer_set_pixel(fb, x, y, px_c);
+                }
+            }}}
+        }
+    }
+}
+
+// ============================================================
+// MALHAS 3D PRE-DEFINIDAS
+// ============================================================
+
+pub fn triangle_new(v0: Vec3, v1: Vec3, v2: Vec3, normal: Vec3) -> Triangle {
+    let mut t = Triangle();
+    let mut uv = Vec2(); uv.x = 0.0; uv.y = 0.0;
+    
+    let mut vert0 = Vertex(); vert0.position = v0; vert0.normal = normal; vert0.uv = uv; vert0.color = color_white();
+    let mut vert1 = Vertex(); vert1.position = v1; vert1.normal = normal; vert1.uv = uv; vert1.color = color_white();
+    let mut vert2 = Vertex(); vert2.position = v2; vert2.normal = normal; vert2.uv = uv; vert2.color = color_white();
+    
+    t.v0 = vert0;
+    t.v1 = vert1;
+    t.v2 = vert2;
+    return t;
+}
+
+pub fn mesh_cube(size: float) -> Mesh {
+    let s = size * 0.5;
+    let mut m = Mesh();
+    m.name = "cube";
+    
+    let normal_z = vec3_new(0.0, 0.0, 1.0);
+    let normal_z_neg = vec3_new(0.0, 0.0, -1.0);
+    let normal_y = vec3_new(0.0, 1.0, 0.0);
+    let normal_y_neg = vec3_new(0.0, -1.0, 0.0);
+    let normal_x = vec3_new(1.0, 0.0, 0.0);
+    let normal_x_neg = vec3_new(-1.0, 0.0, 0.0);
+    
+    m.triangles.push_back(triangle_new(vec3_new(-s, -s, s), vec3_new(s, -s, s), vec3_new(s, s, s), normal_z));
+    m.triangles.push_back(triangle_new(vec3_new(-s, -s, s), vec3_new(s, s, s), vec3_new(-s, s, s), normal_z));
+    m.triangles.push_back(triangle_new(vec3_new(s, -s, -s), vec3_new(-s, -s, -s), vec3_new(-s, s, -s), normal_z_neg));
+    m.triangles.push_back(triangle_new(vec3_new(s, -s, -s), vec3_new(-s, s, -s), vec3_new(s, s, -s), normal_z_neg));
+    m.triangles.push_back(triangle_new(vec3_new(-s, s, s), vec3_new(s, s, s), vec3_new(s, s, -s), normal_y));
+    m.triangles.push_back(triangle_new(vec3_new(-s, s, s), vec3_new(s, s, -s), vec3_new(-s, s, -s), normal_y));
+    m.triangles.push_back(triangle_new(vec3_new(-s, -s, -s), vec3_new(s, -s, -s), vec3_new(s, -s, s), normal_y_neg));
+    m.triangles.push_back(triangle_new(vec3_new(-s, -s, -s), vec3_new(s, -s, s), vec3_new(-s, -s, s), normal_y_neg));
+    m.triangles.push_back(triangle_new(vec3_new(s, -s, s), vec3_new(s, -s, -s), vec3_new(s, s, -s), normal_x));
+    m.triangles.push_back(triangle_new(vec3_new(s, -s, s), vec3_new(s, s, -s), vec3_new(s, s, s), normal_x));
+    m.triangles.push_back(triangle_new(vec3_new(-s, -s, -s), vec3_new(-s, -s, s), vec3_new(-s, s, s), normal_x_neg));
+    m.triangles.push_back(triangle_new(vec3_new(-s, -s, -s), vec3_new(-s, s, s), vec3_new(-s, s, -s), normal_x_neg));
+    
+    return m;
+}
+
+pub fn mesh_sphere(radius: float, segments: int) -> Mesh {
+    let mut m = Mesh();
+    m.name = "sphere";
+    
+    for lat in 0..segments {
+        let theta1 = 3.14159265 * lat / segments;
+        let theta2 = 3.14159265 * (lat + 1) / segments;
+        
+        for lon in 0..segments {
+            let phi1 = 2.0 * 3.14159265 * lon / segments;
+            let phi2 = 2.0 * 3.14159265 * (lon + 1) / segments;
+            
+            let p1 = vec3_new(radius * math.sin(theta1) * math.cos(phi1), radius * math.cos(theta1), radius * math.sin(theta1) * math.sin(phi1));
+            let p2 = vec3_new(radius * math.sin(theta2) * math.cos(phi1), radius * math.cos(theta2), radius * math.sin(theta2) * math.sin(phi1));
+            let p3 = vec3_new(radius * math.sin(theta2) * math.cos(phi2), radius * math.cos(theta2), radius * math.sin(theta2) * math.sin(phi2));
+            let p4 = vec3_new(radius * math.sin(theta1) * math.cos(phi2), radius * math.cos(theta1), radius * math.sin(theta1) * math.sin(phi2));
+            
+            m.triangles.push_back(triangle_new(p1, p2, p3, vec3_normalize(p1)));
+            m.triangles.push_back(triangle_new(p1, p3, p4, vec3_normalize(p1)));
+        }
+    }
+    
+    return m;
+}
+
+pub fn mesh_plane(size: float) -> Mesh {
+    let s = size * 0.5;
+    let normal = vec3_new(0.0, 1.0, 0.0);
+    
+    let mut m = Mesh();
+    m.name = "plane";
+    m.triangles.push_back(triangle_new(vec3_new(-s, 0.0, -s), vec3_new(s, 0.0, -s), vec3_new(s, 0.0, s), normal));
+    m.triangles.push_back(triangle_new(vec3_new(-s, 0.0, -s), vec3_new(s, 0.0, s), vec3_new(-s, 0.0, s), normal));
+    return m;
+}
+
+// ============================================================
+// ILUMINACAO PHONG
+// ============================================================
+
+pub fn phong_shade(normal: Vec3, position: Vec3, camera_pos: Vec3, light: Light, material: Material) -> Color {
+    let ambient = color_mul(material.ambient, light.intensity * 0.1);
+    
+    let light_dir = vec3_normalize(vec3_sub(light.position, position));
+    let diff = math.max(0.0, vec3_dot(normal, light_dir));
+    let diffuse = color_mul(color_mul_color(material.diffuse, light.color), diff * light.intensity);
+    
+    let view_dir = vec3_normalize(vec3_sub(camera_pos, position));
+    let reflect_dir = vec3_reflect(vec3_mul(light_dir, -1.0), normal);
+    let spec = math.pow(math.max(0.0, vec3_dot(view_dir, reflect_dir)), material.shininess);
+    let specular = color_mul(color_mul_color(material.specular, light.color), spec * light.intensity);
+    
+    return color_clamp(color_add(color_add(ambient, diffuse), specular));
+}
+
+// ============================================================
+// SCENE E RENDERIZACAO
+// ============================================================
+
+pub fn scene_new() -> Scene {
+    let mut s = Scene();
+    s.ambient_color = color_new(0.1, 0.1, 0.1, 1.0);
+    s.camera.position = vec3_new(0.0, 0.0, 5.0);
+    s.camera.target = vec3_zero();
+    s.camera.up = vec3_new(0.0, 1.0, 0.0);
+    s.camera.fov = 1.047;
+    s.camera.z_near = 0.1;
+    s.camera.z_far = 100.0;
+    return s;
+}
+
+pub fn scene_add_mesh(scene: &mut Scene, mesh: Mesh, transform: Transform, material: Material) -> void {
+    let mut obj = SceneObject();
+    obj.mesh = mesh;
+    obj.transform = transform;
+    obj.material = material;
+    scene.meshes.push_back(obj);
+}
+
+pub fn scene_add_light(scene: &mut Scene, light: Light) -> void {
+    scene.lights.push_back(light);
+}
+
+pub fn render(scene: &Scene, fb: &mut Framebuffer) -> void {
+    framebuffer_clear(fb, scene.ambient_color);
+    
+    let aspect = fb.width / (fb.height * 2.0);
+    let view_matrix = mat4_look_at(scene.camera.position, scene.camera.target, scene.camera.up);
+    let proj_matrix = mat4_perspective(scene.camera.fov, aspect, scene.camera.z_near, scene.camera.z_far);
+    let vp_matrix = mat4_mul(proj_matrix, view_matrix);
+    
+    let mlen = scene.meshes.size();
+    for i in 0..mlen {
+        let obj = scene.meshes[i];
+        let model_matrix = transform_matrix(obj.transform);
+        let mvp_matrix = mat4_mul(vp_matrix, model_matrix);
+        
+        let tlen = obj.mesh.triangles.size();
+        for j in 0..tlen {
+            let tri = obj.mesh.triangles[j];
+            
+            let v0_world = mat4_transform_point(model_matrix, tri.v0.position);
+            let v1_world = mat4_transform_point(model_matrix, tri.v1.position);
+            let v2_world = mat4_transform_point(model_matrix, tri.v2.position);
+            
+            let normal = vec3_normalize(vec3_cross(vec3_sub(v1_world, v0_world), vec3_sub(v2_world, v0_world)));
+            
+            let view_dir = vec3_normalize(vec3_sub(scene.camera.position, v0_world));
+            if vec3_dot(normal, view_dir) > 0.0 {
+                let v0_clip = mat4_transform_point(mvp_matrix, tri.v0.position);
+                let v1_clip = mat4_transform_point(mvp_matrix, tri.v1.position);
+                let v2_clip = mat4_transform_point(mvp_matrix, tri.v2.position);
+                
+                let mut c0 = obj.material.ambient;
+                let mut c1 = obj.material.ambient;
+                let mut c2 = obj.material.ambient;
+                
+                if scene.lights.size() > 0 {
+                    let light = scene.lights[0];
+                    c0 = phong_shade(normal, v0_world, scene.camera.position, light, obj.material);
+                    c1 = phong_shade(normal, v1_world, scene.camera.position, light, obj.material);
+                    c2 = phong_shade(normal, v2_world, scene.camera.position, light, obj.material);
+                }
+                
+                draw_triangle(fb, v0_clip, v1_clip, v2_clip, c0, c1, c2);
+            }
+        }
+    }
+}
+
+pub fn framebuffer_to_terminal(fb: &Framebuffer, width: int, height: int) -> void {
+    let chars_len = 10;
+    
+    for y in 0..height {
+        let mut row_str = "";
+        for x in 0..width {
+            let px_color = fb.pixels[y * fb.width + x];
+            let luminance = px_color.r * 0.299 + px_color.g * 0.587 + px_color.b * 0.114;
+            
+            let mut idx = luminance * chars_len;
+            if idx >= chars_len { idx = chars_len - 1; }
+            if idx < 0 { idx = 0; }
+            
+            let mut c = " ";
+            if idx == 0 { c = " "; }
+            if idx == 1 { c = "."; }
+            if idx == 2 { c = ":"; }
+            if idx == 3 { c = "-"; }
+            if idx == 4 { c = "="; }
+            if idx == 5 { c = "+"; }
+            if idx == 6 { c = "*"; }
+            if idx == 7 { c = "#"; }
+            if idx == 8 { c = "%"; }
+            if idx == 9 { c = "@"; }
+            
+            let cr = px_color.r * 255.0;
+            let cg = px_color.g * 255.0;
+            let cb = px_color.b * 255.0;
+            
+            row_str = row_str + terminal.fg_color(16 + (cr / 51.0)*36 + (cg / 51.0)*6 + (cb / 51.0)) + c;
+        }
+        print(row_str + terminal.reset() + "\n");
+    }
+}

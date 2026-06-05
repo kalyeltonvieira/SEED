@@ -1,0 +1,51 @@
+module stdlib.crypto
+
+/// Hash SHA-256
+fn sha256(data: string) -> string {
+    return syscall.crypto_sha256(data)
+}
+
+/// Hash SHA-512
+fn sha512(data: string) -> string {
+    return syscall.crypto_sha512(data)
+}
+
+/// Hash MD5
+fn md5(data: string) -> string {
+    return syscall.crypto_md5(data)
+}
+
+/// HMAC
+fn hmac(key: string, data: string, algo: string) -> string {
+    return syscall.crypto_hmac(key, data, algo)
+}
+
+/// AES-256
+fn aes_encrypt(data: string, key: string) -> string {
+    return syscall.crypto_aes_encrypt(data, key)
+}
+
+/// AES-256
+fn aes_decrypt(data: string, key: string) -> string {
+    return syscall.crypto_aes_decrypt(data, key)
+}
+
+/// Bytes aleatórios
+fn random_bytes(n: int) -> string {
+    return syscall.crypto_random_bytes(n)
+}
+
+/// UUID v4
+fn uuid() -> string {
+    return syscall.crypto_uuid()
+}
+
+/// Hash de senha
+fn bcrypt_hash(password: string) -> string {
+    return syscall.crypto_bcrypt_hash(password)
+}
+
+/// Verifica senha
+fn bcrypt_verify(password: string, hash: string) -> bool {
+    return syscall.crypto_bcrypt_verify(password, hash)
+}

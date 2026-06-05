@@ -1,0 +1,312 @@
+module stdlib.xml
+
+/// Parser e gerador de XML
+
+type XMLNode = {
+    tag: string
+    attributes: dict
+    children: [XMLNode]
+    text: string
+}
+
+type XMLParser = {
+    data: string
+    position: int
+}
+
+fn xml_parse(data: string) -> XMLNode {
+    let parser = XMLParser {
+        data: data,
+        position: 0
+    }
+    return parse_node(parser)
+}
+
+fn parse_node(parser: XMLParser) -> XMLNode {
+    skip_whitespace(parser)
+    
+    if parser.data[parser.position] != '<' {
+        throw "Expected '<'"
+    }
+    
+    parser.position = parser.position + 1
+    
+    // Check for closing tag
+    if parser.data[parser.position] == '/' {
+        throw "Unexpected closing tag"
+    }
+    
+    // Parse tag name
+    let tag = parse_tag_name(parser)
+    let attributes = parse_attributes(parser)
+    
+    // Check for self-closing tag
+    if parser.data[parser.position] == '/' {
+        parser.position = parser.position + 2 // Skip '/>'
+        return XMLNode {
+            tag: tag,
+            attributes: attributes,
+            children: [],
+            text: ""
+        }
+    }
+    
+    parser.position = parser.position + 1 // Skip '>'
+    
+    // Parse children
+    let children = []
+    let text = ""
+    
+    while parser.position < parser.data.len {
+        skip_whitespace(parser)
+        
+        if parser.data[parser.position] == '<' {
+            if parser.position + 1 < parser.data.len && parser.data[parser.position + 1] == '/' {
+                // Closing tag
+                parser.position = parser.position + 2
+                let closing_tag = parse_tag_name(parser)
+                parser.position = parser.position + 1 // Skip '>'
+                
+                if closing_tag != tag {
+                    throw "Mismatched closing tag"
+                }
+                
+                break
+            } else {
+                // Child node
+                children.push(parse_node(parser))
+            }
+        } else {
+            // Text content
+            text = text + parser.data[parser.position]
+            parser.position = parser.position + 1
+        }
+    }
+    
+    return XMLNode {
+        tag: tag,
+        attributes: attributes,
+        children: children,
+        text: text.trim()
+    }
+}
+
+fn parse_tag_name(parser: XMLParser) -> string {
+    let name = ""
+    
+    while parser.position < parser.data.len {
+        let c = parser.data[parser.position]
+        if c == ' ' || c == '>' || c == '/' || c == '\t' || c == '\n' {
+            break
+        }
+        name = name + c
+        parser.position = parser.position + 1
+    }
+    
+    return name
+}
+
+fn parse_attributes(parser: XMLParser) -> dict {
+    let attrs = dict()
+    
+    while parser.position < parser.data.len {
+        skip_whitespace(parser)
+        
+        if parser.data[parser.position] == '>' || parser.data[parser.position] == '/' {
+            break
+        }
+        
+        let name = parse_tag_name(parser)
+        skip_whitespace(parser)
+        
+        if parser.data[parser.position] != '=' {
+            throw "Expected '='"
+        }
+        
+        parser.position = parser.position + 1
+        skip_whitespace(parser)
+        
+        let quote = parser.data[parser.position]
+        if quote != '"' && quote != "'" {
+            throw "Expected quote"
+        }
+        
+        parser.position = parser.position + 1
+        let value = ""
+        
+        while parser.position < parser.data.len {
+            if parser.data[parser.position] == quote {
+                parser.position = parser.position + 1
+                break
+            }
+            value = value + parser.data[parser.position]
+            parser.position = parser.position + 1
+        }
+        
+        attrs[name] = value
+    }
+    
+    return attrs
+}
+
+fn skip_whitespace(parser: XMLParser) {
+    while parser.position < parser.data.len {
+        let c = parser.data[parser.position]
+        if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+            parser.position = parser.position + 1
+        } else {
+            break
+        }
+    }
+}
+
+// XML generation
+fn xml_generate(node: XMLNode) -> string {
+    let result = "<" + node.tag
+    
+    for (name, value) in node.attributes {
+        result = result + " " + name + "=\"" + escape_xml(value) + "\""
+    }
+    
+    if node.children.len == 0 && node.text.is_empty() {
+        return result + "/>"
+    }
+    
+    result = result + ">"
+    
+    if !node.text.is_empty() {
+        result = result + escape_xml(node.text)
+    }
+    
+    for child in node.children {
+        result = result + xml_generate(child)
+    }
+    
+    result = result + "</" + node.tag + ">"
+    
+    return result
+}
+
+fn escape_xml(s: string) -> string {
+    let result = s
+    result = result.replace("&", "&amp;")
+    result = result.replace("<", "&lt;")
+    result = result.replace(">", "&gt;")
+    result = result.replace("\"", "&quot;")
+    result = result.replace("'", "&apos;")
+    return result
+}
+
+fn unescape_xml(s: string) -> string {
+    let result = s
+    result = result.replace("&amp;", "&")
+    result = result.replace("&lt;", "<")
+    result = result.replace("&gt;", ">")
+    result = result.replace("&quot;", "\"")
+    result = result.replace("&apos;", "'")
+    return result
+}
+
+// XML querying
+fn find(node: XMLNode, tag: string) -> [XMLNode] {
+    let results = []
+    
+    if node.tag == tag {
+        results.push(node)
+    }
+    
+    for child in node.children {
+        results = results + find(child, tag)
+    }
+    
+    return results
+}
+
+fn find_by_attribute(node: XMLNode, attr: string, value: string) -> [XMLNode] {
+    let results = []
+    
+    if node.attributes.get(attr, "") == value {
+        results.push(node)
+    }
+    
+    for child in node.children {
+        results = results + find_by_attribute(child, attr, value)
+    }
+    
+    return results
+}
+
+fn get_text(node: XMLNode) -> string {
+    if !node.text.is_empty() {
+        return node.text
+    }
+    
+    let text = ""
+    for child in node.children {
+        text = text + get_text(child)
+    }
+    
+    return text
+}
+
+fn get_attribute(node: XMLNode, name: string, default: string) -> string {
+    return node.attributes.get(name, default)
+}
+
+// XML to JSON conversion
+fn xml_to_json(node: XMLNode) -> json.Value {
+    let obj = dict()
+    
+    if node.children.len == 0 {
+        obj["#text"] = json.string(node.text)
+    } else {
+        for child in node.children {
+            let child_json = xml_to_json(child)
+            if obj.contains(child.tag) {
+                let existing = obj[child.tag]
+                if existing.kind == "array" {
+                    existing.data.push(child_json)
+                } else {
+                    obj[child.tag] = json.array([existing, child_json])
+                }
+            } else {
+                obj[child.tag] = child_json
+            }
+        }
+    }
+    
+    for (name, value) in node.attributes {
+        obj["@" + name] = json.string(value)
+    }
+    
+    return json.object(obj)
+}
+
+fn json_to_xml(value: json.Value, tag: string) -> XMLNode {
+    let node = XMLNode {
+        tag: tag,
+        attributes: dict(),
+        children: [],
+        text: ""
+    }
+    
+    if value.kind == "object" {
+        for (key, val) in value.data {
+            if key.starts_with("@") {
+                node.attributes[key.substring(1, key.len())] = val.data
+            } else if key == "#text" {
+                node.text = val.data
+            } else {
+                node.children.push(json_to_xml(val, key))
+            }
+        }
+    } else if value.kind == "array" {
+        for item in value.data {
+            node.children.push(json_to_xml(item, tag))
+        }
+    } else {
+        node.text = value.data
+    }
+    
+    return node
+}

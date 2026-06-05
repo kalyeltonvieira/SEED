@@ -1,0 +1,79 @@
+module tests.seed_selftest
+
+test "hello-world-approved" {
+    let p = seed1.compile("fn main(){ print(\"Hello World\") }")
+    assert(p.diagnostics.any(d => d.code == "SEED000"))
+}
+
+test "naive-fibonacci-warned" {
+    let p = seed1.compile("fn fib(n){ if n<=1{n}else{fib(n-1)+fib(n-2)} }")
+    assert(p.diagnostics.any(d => d.code == "SEED002"))
+    assert(p.rewrites.any(r => r.name == "fib-naive-to-matrix"))
+}
+
+test "bubble-sort-needs-negotiation" {
+    let src = "
+        fn ordenar(lista) {
+            for i in 0..len(lista) {
+                for j in 0..len(lista)-1 {
+                    if lista[j] > lista[j+1] { trocar(lista, j, j+1) }
+                }
+            }
+            lista
+        }
+    "
+    let p = seed1.compile(src)
+    assert(p.diagnostics.any(d => d.code == "SEED001"))
+    assert(p.rewrites.any(r => r.name == "bubble-sort-to-timsort"))
+}
+
+test "keep-compiles-original" {
+    let src = "#[keep] fn ordenar(lista){ for i in 0..len(lista){ for j in 0..len(lista)-1{ if lista[j] > lista[j+1]{ swap(lista,j,j+1) } } } lista }"
+    let p = seed1.compile(src)
+    assert(p.diagnostics.any(d => d.message.contains("preservado")))
+}
+
+test "select-star-expires" {
+    let p = seed1.compile("fn buscar(){ sql_query(\"SELECT * FROM usuarios\") }")
+    assert(p.diagnostics.any(d => d.code == "SEED003"))
+    assert(p.rewrites.any(r => r.name == "select-star-to-paged-cache"))
+}
+
+test "implicit-string-int-negotiates" {
+    let p = seed1.compile("let nome: string = \"Joao\"; let idade: int = 30; let r = nome + idade")
+    assert(p.diagnostics.any(d => d.code == "SEED004"))
+}
+
+test "non-exhaustive-result-match-warned" {
+    let p = seed1.compile("fn explain(r: Result[Int,Error]) -> String { match r { Ok(v) => to_string(v) } }")
+    assert(p.diagnostics.any(d => d.code == "SEED005"))
+    assert(p.rewrites.any(r => r.name == "complete-match-result"))
+}
+
+test "unchecked-result-needs-question-or-match" {
+    let p = seed1.compile("fn load(path: String) effect fs -> Result[String,Error] { let body = fs.read_text(path); return Ok(body) }")
+    assert(p.diagnostics.any(d => d.code == "SEED006"))
+    assert(p.rewrites.any(r => r.name == "unchecked-result-to-question"))
+}
+
+test "question-mark-documents-result-flow" {
+    let p = seed1.compile("fn load(path: String) effect fs -> Result[String,Error] { let body = fs.read_text(path)?; return Ok(body) }")
+    assert(!p.diagnostics.any(d => d.code == "SEED006"))
+    assert(p.notes.any(o => o.name == "result-propagation"))
+}
+
+test "genitor-produces-search-plan" {
+    let result = synthesizer.synthesize("crie uma funcao que ordena uma lista de numeros")
+    assert(result.intent.name == "sort")
+    assert(result.selected.tests.any(t => t.contains("ordenada")))
+}
+
+test "effects-cannot-grow-silently" {
+    let before = seed0.compile("fn a(){ return 1 }")
+    let after = seed0.compile("fn a(){ net.post(\"x\", \"y\") }")
+    assert(seed1.effect_audit(before, after) == false)
+}
+
+test "license-accepts-no" {
+    assert(license.accept_no == true)
+}

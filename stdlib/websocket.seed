@@ -1,0 +1,40 @@
+module stdlib.websocket
+
+/// WebSocket client module
+
+pub type WebSocket = {
+    url: string,
+    state: string
+}
+
+pub fn connect(url: string) -> Result<WebSocket, string> {
+    return syscall.websocket_connect(url)
+}
+
+pub fn send(ws: WebSocket, data: string) -> Result<void, string> {
+    return syscall.websocket_send(ws, data)
+}
+
+pub fn recv(ws: WebSocket) -> Result<string, string> {
+    return syscall.websocket_recv(ws)
+}
+
+pub fn close(ws: WebSocket) -> Result<void, string> {
+    return syscall.websocket_close(ws)
+}
+
+pub fn ping(ws: WebSocket) -> Result<void, string> {
+    return syscall.websocket_ping(ws)
+}
+
+pub fn pong(ws: WebSocket) -> Result<void, string> {
+    return syscall.websocket_pong(ws)
+}
+
+pub fn is_open(ws: WebSocket) -> bool {
+    return ws.state == "open"
+}
+
+pub fn is_closed(ws: WebSocket) -> bool {
+    return ws.state == "closed"
+}

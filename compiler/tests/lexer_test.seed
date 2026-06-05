@@ -1,0 +1,153 @@
+module compiler.tests.lexer_test
+
+/// Testes do Lexer SEED
+/// Verifica se o lexer tokeniza corretamente diferentes tipos de código
+
+use compiler.lexer
+
+fn main() {
+    println("=== Testes do Lexer SEED ===")
+    println("")
+    
+    test_keywords()
+    test_identifiers()
+    test_numbers()
+    test_strings()
+    test_operators()
+    test_comments()
+    test_errors()
+    
+    println("")
+    println("Todos os testes do lexer passaram!")
+}
+
+fn test_keywords() {
+    println("Testando keywords...")
+    
+    let source = "fn let const if else for while return match case"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros inesperados: " + errors.join(", "))
+        exit(1)
+    }
+    
+    if tokens.len != 10 {
+        println("  [FALHOU] Esperado 10 tokens, obteve " + tokens.len.to_string())
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_identifiers() {
+    println("Testando identificadores...")
+    
+    let source = "my_var _private camelCase snake_case"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros inesperados: " + errors.join(", "))
+        exit(1)
+    }
+    
+    if tokens.len != 4 {
+        println("  [FALHOU] Esperado 4 tokens, obteve " + tokens.len.to_string())
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_numbers() {
+    println("Testando números...")
+    
+    let source = "42 3.14 0xFF 0b1010 1_000_000 1e10"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros inesperados: " + errors.join(", "))
+        exit(1)
+    }
+    
+    if tokens.len != 6 {
+        println("  [FALHOU] Esperado 6 tokens, obteve " + tokens.len.to_string())
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_strings() {
+    println("Testando strings...")
+    
+    let source = "\"hello\" \"world\" \"escaped \\\" quote\""
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros inesperados: " + errors.join(", "))
+        exit(1)
+    }
+    
+    if tokens.len != 3 {
+        println("  [FALHOU] Esperado 3 tokens, obteve " + tokens.len.to_string())
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_operators() {
+    println("Testando operadores...")
+    
+    let source = "+ - * / = == != < > <= >= && || -> =>"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros inesperados: " + errors.join(", "))
+        exit(1)
+    }
+    
+    if tokens.len != 14 {
+        println("  [FALHOU] Esperado 14 tokens, obteve " + tokens.len.to_string())
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_comments() {
+    println("Testando comentários...")
+    
+    let source = "// linha\nfn main() {} /* bloco */"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros inesperados: " + errors.join(", "))
+        exit(1)
+    }
+    
+    // Comentários devem ser filtrados
+    let filtered = lexer.filter_comments(tokens)
+    
+    if filtered.len != 6 {
+        println("  [FALHOU] Esperado 6 tokens (comentários filtrados), obteve " + filtered.len.to_string())
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_errors() {
+    println("Testando erros...")
+    
+    let source = "fn main() { @ }"  // @ não é válido
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len == 0 {
+        println("  [FALHOU] Esperado erro para caractere inválido")
+        exit(1)
+    }
+    
+    println("  [OK]")
+}

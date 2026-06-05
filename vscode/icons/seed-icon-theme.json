@@ -1,0 +1,18 @@
+{
+  "iconDefinitions": {
+    "seed-file": {
+      "iconPath": "./seed-icon.svg"
+    }
+  },
+  "fileExtensions": {
+    "seed": "seed-file"
+  },
+  "fileNames": {
+    "seed.toml": "seed-file",
+    "seed.lock": "seed-file",
+    "Seedfile": "seed-file"
+  },
+  "languageIds": {
+    "seed": "seed-file"
+  }
+}

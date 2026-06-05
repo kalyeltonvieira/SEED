@@ -1,0 +1,65 @@
+rule reject_bubble_sort {
+    when pattern("bubble_sort") && !attribute("#[keep]")
+    then propose("sort.timsort")
+    explain("Bubble sort O(n^2) rejeitado para codigo de producao.")
+}
+
+rule keep_means_compile_anyway {
+    when attribute("#[keep]")
+    then compile_original()
+    explain("A licenca reversa vence: SEED avisa, mas compila a versao do programador.")
+}
+
+rule naive_fibonacci {
+    when pattern("fib(n-1)+fib(n-2)") || pattern("fib(n - 1) + fib(n - 2)")
+    then propose("math.fib_matrix")
+    explain("Fibonacci recursivo ingenuo e O(2^n); matriz e O(log n).")
+}
+
+rule negotiate_small_hash_map {
+    when requested("hash_map") && estimated_items <= 8
+    then propose("linear_array")
+    explain("Array linear evita hashing, buckets e alocacoes extras.")
+}
+
+rule implicit_string_int {
+    when operator("+") && left.type == "string" && right.type == "int"
+    then insert("to_string")
+    explain("Conversao implicita permitida, mas registrada para evitar confusao com soma numerica.")
+}
+
+rule effects_cannot_grow_silently {
+    when rewrite.adds_effect(["fs.write", "net", "unsafe", "syscall"])
+    then require_human_review()
+    explain("Otimizacao nao pode ganhar capacidade nova sem aprovacao.")
+}
+
+rule stale_sql_query {
+    when pattern("SELECT *") && !pattern("LIMIT") && !attribute("#[keep]")
+    then propose("query.paginated_cache")
+    explain("Consulta sem limite envelhece quando a tabela cresce.")
+}
+
+rule freshness_contract {
+    when attribute("#[expires]") && function.expired
+    then propose_rewrite()
+    explain("Codigo com validade vencida entra na fila de sonho/revisao.")
+}
+
+rule genitor_population {
+    when construct("genitor")
+    then generate_population(size = 100)
+    explain("Genitor cria candidatos, testa propriedades e seleciona sobreviventes.")
+}
+
+rule autonomous_mutation_gate {
+    when mutation.fitness_delta > 0.05 && mutation.safety_score >= 0.90 && tests.property_score >= 0.99
+    then apply_autonomously()
+    explain("Mutacao autonoma permitida apenas com ganho, seguranca e testes.")
+}
+
+rule dream_when_idle {
+    when system.idle_minutes >= 30 && license.dreams_enabled
+    then mutator.dream()
+    explain("Sonho permitido pela licenca e registrado em dreams/dream.log.")
+}

@@ -1,0 +1,171 @@
+module mutator
+
+import stdlib.io
+import stdlib.fs
+import stdlib.collections
+import stdlib.string
+
+type Mutation = {
+    file: string
+    before: string
+    after: string
+    reason: string
+    fitness_delta: float
+    concise_delta: int
+    safety_score: float
+    tests_passed: bool
+    requires_review: bool
+    explanation: string
+}
+
+type Fitness = {
+    runtime_delta: float
+    memory_delta: float
+    bytecode_delta: float
+    readability_delta: float
+    property_score: float
+}
+
+type ReviewItem = {
+    id: string
+    mutation: Mutation
+    status: string
+    created_at: string
+}
+
+const AUTONOMOUS_MIN_GAIN = 0.05
+const AUTONOMOUS_MIN_SAFETY = 0.90
+
+fn find_repeated_patterns(source: string) -> Array[string] {
+    let patterns = Array[string]()
+    for window in 3..12 {
+        for fragment in source.windows(window) {
+            if source.count(fragment) >= 3 {
+                patterns.push(fragment)
+            }
+        }
+    }
+    return patterns.unique()
+}
+
+fn propose(source: string) -> Array[Mutation] {
+    let muts = Array[Mutation]()
+    for p in find_repeated_patterns(source) {
+        muts.push(Mutation(
+            "",
+            source,
+            abstract_pattern(source, p),
+            "Trecho repetido 3+ vezes; extraido para funcao/macro.",
+            0.0,
+            -p.len,
+            0.85,
+            false,
+            true,
+            "A abstracao reduz repeticao, mas pode esconder intencao. Revisao humana recomendada."
+        ))
+    }
+    if source.contains("fib(n-1) + fib(n-2)") {
+        muts.push(Mutation(
+            "",
+            source,
+            source.replace_naive_fib_with_matrix(),
+            "Fibonacci O(2^n) -> O(log n).",
+            0.90,
+            0,
+            0.96,
+            false,
+            false,
+            "Substituicao preserva propriedade matematica para inteiros nao negativos."
+        ))
+    }
+    if source.contains("SELECT *") && !source.contains("LIMIT") {
+        muts.push(Mutation(
+            "",
+            source,
+            source.replace("SELECT *", "SELECT explicit_fields"),
+            "Consulta ampla recebeu campos explicitos e contrato de paginacao.",
+            0.12,
+            8,
+            0.74,
+            false,
+            true,
+            "A SEED nao sabe quais campos sao obrigatorios. Requer aprovacao."
+        ))
+    }
+    return muts
+}
+
+fn fitness(before: string, after: string) -> Fitness {
+    return Fitness(
+        benchmark_delta(before, after),
+        memory_delta(before, after),
+        bytecode_size_delta(before, after),
+        readability_delta(before, after),
+        property_test_score(before, after)
+    )
+}
+
+fn safety(before: string, after: string) -> float {
+    let score = 1.0
+    if after.contains("net.") && !before.contains("net.") { score = score - 0.50 }
+    if after.contains("fs.write") && !before.contains("fs.write") { score = score - 0.35 }
+    if after.contains("unsafe") { score = score - 0.75 }
+    if after.contains("syscall") && !before.contains("syscall") { score = score - 0.65 }
+    if score < 0.0 { return 0.0 }
+    return score
+}
+
+fn enqueue_review(file: string, mutation: Mutation) {
+    let item = ReviewItem(hash(file + mutation.reason + timestamp()), mutation, "pending", timestamp())
+    fs.write_text("dreams/review_" + item.id + ".seedreview", serialize(item))
+    io.append_text("dreams/dream.log", "[" + timestamp() + "] REVISAO: " + file + " - " + mutation.reason + "\n")
+}
+
+fn apply_if_allowed(file: string, mutation: Mutation, autonomous: bool) {
+    let accepted = false
+    if mutation.requires_review {
+        enqueue_review(file, mutation)
+        return
+    }
+    if autonomous
+        && mutation.fitness_delta > AUTONOMOUS_MIN_GAIN
+        && mutation.safety_score >= AUTONOMOUS_MIN_SAFETY
+        && mutation.tests_passed {
+        accepted = true
+    } else {
+        accepted = io.ask_yes_no(
+            "SEED quer alterar " + file + ": " + mutation.reason
+            + "\nGanho: " + mutation.fitness_delta
+            + " Seguranca: " + mutation.safety_score
+            + "\n" + mutation.explanation
+            + "\nAceita?"
+        )
+    }
+    if accepted {
+        fs.copy(file, "history/" + timestamp() + "_" + fs.basename(file))
+        fs.write_text(file, mutation.after)
+        io.append_text("dreams/dream.log", "[" + timestamp() + "] MUTACAO: " + file + " - " + mutation.reason + "\n")
+    } else {
+        io.append_text("dreams/dream.log", "[" + timestamp() + "] RECUSADA: " + file + " - " + mutation.reason + "\n")
+    }
+}
+
+fn dream() {
+    for file in fs.glob("*.seed") + fs.glob("stdlib/*.seed") + fs.glob("programs/*.seed") {
+        let src = fs.read_text(file)
+        for m in propose(src) {
+            m.file = file
+            let f = fitness(src, m.after)
+            m.fitness_delta = f.runtime_delta
+            m.safety_score = safety(src, m.after)
+            m.tests_passed = run_property_tests(src, m.after) && f.property_score >= 0.99
+            apply_if_allowed(file, m, config.autonomous)
+        }
+    }
+}
+
+fn main(args) {
+    config.autonomous = args.contains("--autonomous")
+    io.append_text("dreams/dream.log", "[" + timestamp() + "] SONHO: ciclo iniciado. autonomo=" + config.autonomous + "\n")
+    dream()
+}

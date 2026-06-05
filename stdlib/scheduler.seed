@@ -1,0 +1,119 @@
+module stdlib.scheduler
+
+import stdlib.time
+import stdlib.io
+
+/// Cron job scheduler for periodic background tasks
+
+pub type CronExpression = {
+    minute: string,
+    hour: string,
+    day_of_month: string,
+    month: string,
+    day_of_week: string
+}
+
+pub type CronJob = {
+    name: string,
+    expression: CronExpression,
+    command: fn(),
+    last_run: Option[time.Timestamp],
+    next_run: time.Timestamp
+}
+
+pub type CronScheduler = {
+    jobs: [CronJob],
+    running: bool
+}
+
+pub fn cron_expression(expr: string) -> CronExpression {
+    let parts = expr.split(" ")
+    return CronExpression {
+        minute: parts[0],
+        hour: parts[1],
+        day_of_month: parts[2],
+        month: parts[3],
+        day_of_week: parts[4]
+    }
+}
+
+pub fn cron_job(name: string, expr: string, command: fn()) -> CronJob {
+    let cron_expr = cron_expression(expr)
+    let next_run = calculate_next_run(cron_expr)
+    return CronJob {
+        name: name,
+        expression: cron_expr,
+        command: command,
+        last_run: Option[time.Timestamp].None,
+        next_run: next_run
+    }
+}
+
+pub fn calculate_next_run(expr: CronExpression) -> time.Timestamp {
+    let next = time.now()
+    if expr.minute != "*" {
+        let minute = expr.minute.to_int()
+        let current_minute = next.seconds % 60
+        if minute > current_minute {
+            next = time.add(next, time.Duration { seconds: minute - current_minute, nanos: 0 })
+        } else {
+            next = time.add(next, time.Duration { seconds: 60 - current_minute + minute, nanos: 0 })
+        }
+    }
+    return next
+}
+
+pub fn should_run(job: CronJob) -> bool {
+    return time.to_millis(time.elapsed(job.next_run)) >= 0
+}
+
+pub fn run_job(job: CronJob) {
+    io.println("Running job: " + job.name)
+    let start = time.now()
+    job.command()
+    let elapsed = time.elapsed(start)
+    io.println("Job completed: " + job.name + " (" + time.to_millis(elapsed).to_string() + "ms)")
+    job.last_run = Option[time.Timestamp].Some(time.now())
+    job.next_run = calculate_next_run(job.expression)
+}
+
+pub fn scheduler() -> CronScheduler {
+    return CronScheduler {
+        jobs: [],
+        running: false
+    }
+}
+
+pub fn add_job(s: CronScheduler, job: CronJob) {
+    s.jobs.push(job)
+}
+
+pub fn start(s: CronScheduler) {
+    s.running = true
+    io.println("=== Cron Scheduler Started ===")
+    
+    while s.running {
+        for job in s.jobs {
+            if should_run(job) {
+                run_job(job)
+            }
+        }
+        time.sleep(1000)
+    }
+}
+
+pub fn stop(s: CronScheduler) {
+    s.running = false
+}
+
+pub fn every_minute() -> string {
+    return "* * * * *"
+}
+
+pub fn every_hour() -> string {
+    return "0 * * * *"
+}
+
+pub fn every_day_at(hour: int) -> string {
+    return "0 " + hour.to_string() + " * * *"
+}

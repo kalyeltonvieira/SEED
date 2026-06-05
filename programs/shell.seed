@@ -1,0 +1,14 @@
+module programs.shell
+
+import stdlib.io
+
+fn main() {
+    io.println("SEED shell. Digite codigo; SEED analisara antes de executar.")
+    while true {
+        io.print("seed> ")
+        let line = io.read_line()
+        if line == "exit" { break }
+        let p = seed1.compile(line)
+        io.print_report(p.notes)
+    }
+}

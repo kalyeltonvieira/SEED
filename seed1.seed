@@ -1,0 +1,295 @@
+module seed1
+
+import seed0
+import stdlib.io
+import stdlib.collections
+
+const COMPILER_GENERATION = "seed1-v0.3"
+const MIN_AUTONOMOUS_GAIN = 0.05
+
+type Optimization = {
+    name: string
+    confidence: float
+    explain: string
+    before_cost: string
+    after_cost: string
+    requires_consent: bool
+}
+
+type Pass = {
+    name: string
+    phase: string
+    enabled: bool
+    explain: string
+}
+
+type CompileReport = {
+    generation: string
+    diagnostics: Array[seed0.Diagnostic]
+    optimizations: Array[Optimization]
+    bytecode_size: int
+    accepted_rewrites: int
+    refused_rewrites: int
+}
+
+fn pass_table() -> Array[Pass] {
+    return [
+        Pass("constant-folding", "ast", true, "Avalia expressoes constantes antes de emitir bytecode."),
+        Pass("algebraic-simplify", "ast", true, "Remove identidades como x+0, x*1 e x*0."),
+        Pass("complexity-guard", "semantic", true, "Detecta algoritmos com custo assintotico ruim."),
+        Pass("effect-audit", "semantic", true, "Impede que otimizacao aumente capacidades sem permissao."),
+        Pass("freshness-check", "semantic", true, "Marca funcoes vencidas por crescimento de dados ou data."),
+        Pass("exhaustiveness-check", "semantic", true, "Exige match completo para ADTs fechados como Result e Option."),
+        Pass("result-flow-check", "semantic", true, "Detecta Result/Option ignorado e propoe match ou propagacao com ?."),
+        Pass("inline-cache", "bytecode", true, "Memoriza destinos de chamadas frequentes."),
+        Pass("peephole", "bytecode", true, "Troca sequencias curtas por equivalentes menores."),
+        Pass("loop-unroll-small", "bytecode", true, "Desenrola loops pequenos com limite conhecido.")
+    ]
+}
+
+fn constant_folding(program) {
+    return rewrite(program, rule {
+        (number(a) + number(b)) => number(a + b)
+        (number(a) * number(b)) => number(a * b)
+        (number(a) - number(b)) => number(a - b)
+        (number(a) / number(b)) when b != 0 => number(a / b)
+    })
+}
+
+fn algebraic_simplify(program) {
+    return rewrite(program, rule {
+        (x + 0) => x
+        (0 + x) => x
+        (x - 0) => x
+        (x * 1) => x
+        (1 * x) => x
+        (x * 0) => 0
+        (0 * x) => 0
+        (x && true) => x
+        (x || false) => x
+    })
+}
+
+fn dead_code_elimination(program) {
+    return remove_blocks(program, block => block.reachable == false)
+}
+
+fn inline_cache(program) {
+    return annotate_calls(program, call => {
+        if call.count_last_runs >= 3 {
+            call.cache_target = true
+            call.reason = "Chamada estavel detectada em 3+ execucoes."
+        }
+        return call
+    })
+}
+
+fn complexity_guard(program) {
+    let p = program
+    if seed0.detects_bubble_sort(p.source) && !seed0.has_keep(p.source) {
+        p.rewrites.push(seed0.Rewrite(
+            "bubble-sort-to-timsort",
+            "nested swap loops",
+            "stdlib.collections.sort_timsort(lista)",
+            "Bubble sort O(n^2) perde para timsort O(n log n) em entradas gerais.",
+            seed0.Cost("O(n^2)", "O(1)", 0.95),
+            seed0.Cost("O(n log n)", "O(n)", 0.92),
+            false
+        ))
+    }
+    if seed0.detects_naive_fib(p.source) {
+        p.rewrites.push(seed0.Rewrite(
+            "fib-naive-to-matrix",
+            "fib(n-1)+fib(n-2)",
+            "fib_matrix(n)",
+            "Recursao ingenua explode exponencialmente.",
+            seed0.Cost("O(2^n)", "O(n)", 0.98),
+            seed0.Cost("O(log n)", "O(1)", 0.94),
+            false
+        ))
+    }
+    return p
+}
+
+fn freshness_check(program) {
+    let p = program
+    if seed0.detects_unbounded_select(p.source) {
+        p.rewrites.push(seed0.Rewrite(
+            "select-star-to-paged-cache",
+            "SELECT *",
+            "cache.or_else(sql_query_paginated(..., page_size=1000))",
+            "Consulta sem limite envelhece conforme a tabela cresce.",
+            seed0.Cost("O(table)", "O(table)", 0.88),
+            seed0.Cost("O(page)", "O(page)", 0.84),
+            false
+        ))
+    }
+    return p
+}
+
+fn exhaustiveness_check(program) {
+    let p = program
+    if seed0.detects_non_exhaustive_match(p.source) {
+        p.rewrites.push(seed0.Rewrite(
+            "complete-match-result",
+            "match with missing variant",
+            "match with Ok/Err or Some/None branches",
+            "ADTs fechados permitem provar que todos os casos foram tratados.",
+            seed0.Cost("branch may panic", "unknown", 0.91),
+            seed0.Cost("total branch", "same", 0.91),
+            false
+        ))
+    }
+    return p
+}
+
+fn result_flow_check(program) {
+    let p = program
+    if seed0.detects_unchecked_result(p.source) {
+        p.rewrites.push(seed0.Rewrite(
+            "unchecked-result-to-question",
+            "fallible call without handling",
+            "fallible_call()?",
+            "Falhas devem ser propagadas ou tratadas no ponto de uso.",
+            seed0.Cost("hidden failure", "unknown", 0.88),
+            seed0.Cost("explicit failure", "same", 0.88),
+            false
+        ))
+    }
+    return p
+}
+
+fn effect_audit(before, after) -> bool {
+    let before_effects = before.effects
+    let after_effects = after.effects
+    for e in after_effects {
+        if !before_effects.contains(e) && e != seed0.Effect.none {
+            return false
+        }
+    }
+    return true
+}
+
+fn peephole(bytecode) {
+    return bytecode.replace([
+        [cmp r0 r0, jmp if_zero X] => [jmp always X],
+        [alloc 0] => [],
+        [write rA rB 0] => [],
+        [read rA X, write X rA] => []
+    ])
+}
+
+fn negotiate(source) -> Array[Optimization] {
+    let opts = Array[Optimization]()
+    if source.contains("hash_map") && source.estimated_items <= 8 {
+        opts.push(Optimization(
+            "array-linear-over-hashmap",
+            0.82,
+            "Hash map tem overhead alto para poucos elementos; array linear tende a ser mais rapido.",
+            "O(1) medio com alocacoes e hashing",
+            "O(n) com n<=8 e memoria contigua",
+            true
+        ))
+    }
+    if source.contains("while") && source.loop_bounds_known {
+        opts.push(Optimization(
+            "while-to-for",
+            0.77,
+            "Loop com limite conhecido fica mais claro e abre unrolling.",
+            "loop aberto",
+            "loop limitado",
+            true
+        ))
+    }
+    if source.contains("#[expires") || source.contains("SELECT *") {
+        opts.push(Optimization(
+            "freshness-contract",
+            0.90,
+            "Funcao tem risco de envelhecimento; associar validade a tamanho de dados e testes.",
+            "sem validade",
+            "validade auditavel",
+            false
+        ))
+    }
+    if source.contains("genitor ") {
+        opts.push(Optimization(
+            "evolutionary-search",
+            0.71,
+            "Genitor detectado; gerar populacao, cruzar candidatos e selecionar por propriedade.",
+            "implementacao unica",
+            "populacao testada",
+            true
+        ))
+    }
+    if source.contains("match ") {
+        opts.push(Optimization(
+            "match-exhaustiveness",
+            0.91,
+            "match detectado; verificar cobertura de variantes antes de aceitar a geracao.",
+            "ramificacao parcial",
+            "ramificacao total",
+            false
+        ))
+    }
+    if source.contains("?") {
+        opts.push(Optimization(
+            "result-propagation",
+            0.87,
+            "Operador ? detectado; baixar para match que propaga Err/None.",
+            "tratamento manual repetido",
+            "propagacao explicita",
+            false
+        ))
+    }
+    return opts
+}
+
+fn approve_rewrites(program, opts: Array[Optimization]) {
+    let accepted = 0
+    let refused = 0
+    for r in program.rewrites {
+        let gain = estimate_gain(r.cost_before, r.cost_after)
+        if gain > MIN_AUTONOMOUS_GAIN && !r.after.contains("net.") && !r.after.contains("unsafe") {
+            r.accepted = true
+            accepted = accepted + 1
+        } else {
+            r.accepted = io.ask_yes_no("SEED propoe " + r.name + ": " + r.reason + " Aceita?")
+            if r.accepted { accepted = accepted + 1 } else { refused = refused + 1 }
+        }
+    }
+    return { accepted: accepted, refused: refused }
+}
+
+fn compile(source: string) {
+    let p = seed0.compile(source)
+    let guarded = complexity_guard(p)
+    let fresh = freshness_check(guarded)
+    let exhaustive = exhaustiveness_check(fresh)
+    let result_checked = result_flow_check(exhaustive)
+    let folded = constant_folding(result_checked)
+    let simplified = algebraic_simplify(folded)
+    let cached = inline_cache(simplified)
+    let clean = dead_code_elimination(cached)
+    if effect_audit(p, clean) == false {
+        clean.diagnostics.push(seed0.diagnostic(
+            seed0.DiagnosticSeverity.warning,
+            "SEED100",
+            "Otimizacao tentou aumentar capacidades do programa.",
+            "Reescrita bloqueada ate aprovacao explicita.",
+            1.0
+        ))
+    }
+    clean.bytecode = peephole(clean.bytecode)
+    clean.notes = negotiate(source)
+    clean.rewrite_stats = approve_rewrites(clean, clean.notes)
+    return clean
+}
+
+fn main(args) {
+    let src = io.read_text(args[0])
+    let out = compile(src)
+    io.write_bytecode("seed1.bin", out.bytecode)
+    io.print("SEED1 " + COMPILER_GENERATION + "\n")
+    io.print("passes ativos: " + pass_table().filter(p => p.enabled).len + "\n")
+    io.print_report(out.notes)
+}

@@ -1,0 +1,49 @@
+module stdlib.async
+
+/// Async/await runtime module
+
+pub type Future<T> {
+    value: Option<T>,
+    error: Option<string>,
+    completed: bool
+}
+
+pub fn async(f: fn() -> T) -> Future<T> {
+    return syscall.async_spawn(f)
+}
+
+pub fn await(future: Future<T>) -> T {
+    return syscall.async_await(future)
+}
+
+pub fn spawn(f: fn()) -> Future<void> {
+    return syscall.async_spawn(f)
+}
+
+pub fn sleep(ms: int) -> Future<void> {
+    return syscall.async_sleep(ms)
+}
+
+pub fn timeout(future: Future<T>, ms: int) -> Future<T> {
+    return syscall.async_timeout(future, ms)
+}
+
+pub fn race(futures: [Future<T>]) -> Future<T> {
+    return syscall.async_race(futures)
+}
+
+pub fn all(futures: [Future<T>]) -> Future<[T]> {
+    return syscall.async_all(futures)
+}
+
+pub fn any(futures: [Future<T>]) -> Future<T> {
+    return syscall.async_any(futures)
+}
+
+pub fn is_completed(future: Future<T>) -> bool {
+    return future.completed
+}
+
+pub fn is_error(future: Future<T>) -> bool {
+    return future.error.is_some()
+}

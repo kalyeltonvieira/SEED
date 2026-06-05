@@ -1,0 +1,251 @@
+module blog
+
+import stdlib.io
+import stdlib.net
+import stdlib.db
+import stdlib.crypto
+import stdlib.time
+import stdlib.json
+
+/// Blog completo com autenticação, posts e comentários
+type Post = {
+    id: int
+    title: string
+    content: string
+    author: string
+    created_at: time.Timestamp
+}
+
+type Comment = {
+    id: int
+    post_id: int
+    author: string
+    content: string
+    created_at: time.Timestamp
+}
+
+type User = {
+    id: int
+    username: string
+    password_hash: string
+}
+
+let db = null
+
+fn main() {
+    db = db.sqlite_open("blog.db").unwrap()
+    
+    // Create tables
+    db.execute("
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE,
+            password_hash TEXT
+        )
+    ", []).unwrap()
+    
+    db.execute("
+        CREATE TABLE IF NOT EXISTS posts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT,
+            content TEXT,
+            author TEXT,
+            created_at INTEGER
+        )
+    ", []).unwrap()
+    
+    db.execute("
+        CREATE TABLE IF NOT EXISTS comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id INTEGER,
+            author TEXT,
+            content TEXT,
+            created_at INTEGER
+        )
+    ", []).unwrap()
+    
+    println("=== Blog SEED ===")
+    
+    net.serve(3000, fn(req: net.Request) -> net.Response {
+        let path = req.url.split("?")[0]
+        
+        match path {
+            "/" => handle_home(req),
+            "/posts" => handle_posts(req),
+            "/post" => handle_post(req),
+            "/login" => handle_login(req),
+            "/register" => handle_register(req),
+            "/api/posts" => handle_api_posts(req),
+            "/api/comments" => handle_api_comments(req),
+            _ => net.Response { status: 404, headers: {}, body: "Not Found" }
+        }
+    })
+}
+
+fn handle_home(req: net.Request) -> net.Response {
+    let rows = db.query("SELECT * FROM posts ORDER BY created_at DESC LIMIT 10", []).unwrap()
+    let posts_html = ""
+    
+    for row in rows.data {
+        posts_html = posts_html + render_post_preview(row)
+    }
+    
+    return html_response("<h1>Blog SEED</h1>" + posts_html)
+}
+
+fn handle_posts(req: net.Request) -> net.Response {
+    if req.method == "POST" {
+        let data = json.parse(req.body)
+        let title = data.get("title").unwrap().data
+        let content = data.get("content").unwrap().data
+        let author = get_author(req)
+        
+        db.execute(
+            "INSERT INTO posts (title, content, author, created_at) VALUES (?, ?, ?, ?)",
+            [title, content, author, time.now().seconds]
+        ).unwrap()
+        
+        return json_response(json.object([("success", json.boolean(true))]))
+    }
+    
+    let rows = db.query("SELECT * FROM posts ORDER BY created_at DESC", []).unwrap()
+    let posts = []
+    
+    for row in rows.data {
+        posts.push(json.object([
+            ("id", json.number(row[0])),
+            ("title", json.string(row[1])),
+            ("content", json.string(row[2])),
+            ("author", json.string(row[3])),
+            ("created_at", json.number(row[4]))
+        ]))
+    }
+    
+    return json_response(json.array(posts))
+}
+
+fn handle_post(req: net.Request) -> net.Response {
+    let id = req.url.split("=")[1].to_int()
+    let rows = db.query("SELECT * FROM posts WHERE id = ?", [id]).unwrap()
+    
+    if rows.data.len == 0 {
+        return html_response("<h1>Post não encontrado</h1>")
+    }
+    
+    let post = rows.data[0]
+    let comments = db.query("SELECT * FROM comments WHERE post_id = ?", [id]).unwrap()
+    
+    let comments_html = ""
+    for comment in comments.data {
+        comments_html = comments_html + render_comment(comment)
+    }
+    
+    return html_response(render_post_full(post) + comments_html)
+}
+
+fn handle_login(req: net.Request) -> net.Response {
+    if req.method == "POST" {
+        let data = json.parse(req.body)
+        let username = data.get("username").unwrap().data
+        let password = data.get("password").unwrap().data
+        
+        let rows = db.query("SELECT * FROM users WHERE username = ?", [username]).unwrap()
+        
+        if rows.data.len > 0 {
+            let user = rows.data[0]
+            let hash = user[2]
+            
+            if crypto.bcrypt_verify(password, hash) {
+                let token = crypto.uuid()
+                return json_response(json.object([
+                    ("success", json.boolean(true)),
+                    ("token", json.string(token))
+                ]))
+            }
+        }
+        
+        return json_response(json.object([("success", json.boolean(false))]))
+    }
+    
+    return html_response(render_login_form())
+}
+
+fn handle_register(req: net.Request) -> net.Response {
+    if req.method == "POST" {
+        let data = json.parse(req.body)
+        let username = data.get("username").unwrap().data
+        let password = data.get("password").unwrap().data
+        
+        let hash = crypto.bcrypt_hash(password)
+        
+        db.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", [username, hash]).unwrap()
+        
+        return json_response(json.object([("success", json.boolean(true))]))
+    }
+    
+    return html_response(render_register_form())
+}
+
+fn get_author(req: net.Request) -> string {
+    let token = req.headers.get("Authorization", "")
+    // In real implementation, validate token and return username
+    return "Guest"
+}
+
+fn render_post_preview(row) -> string {
+    return "<div class='post'>
+        <h2>" + row[1] + "</h2>
+        <p>" + row[2].substring(0, 200) + "...</p>
+        <small>Por " + row[3] + "</small>
+        <a href='/post?id=" + row[0].to_string() + "'>Ler mais</a>
+    </div>"
+}
+
+fn render_post_full(row) -> string {
+    return "<div class='post'>
+        <h1>" + row[1] + "</h1>
+        <p>" + row[2] + "</p>
+        <small>Por " + row[3] + "</small>
+    </div>"
+}
+
+fn render_comment(row) -> string {
+    return "<div class='comment'>
+        <p>" + row[3] + "</p>
+        <small>Por " + row[2] + "</small>
+    </div>"
+}
+
+fn render_login_form() -> string {
+    return "<h1>Login</h1>
+    <form method='POST'>
+        <input name='username' placeholder='Username' />
+        <input name='password' type='password' placeholder='Password' />
+        <button type='submit'>Login</button>
+    </form>"
+}
+
+fn render_register_form() -> string {
+    return "<h1>Registro</h1>
+    <form method='POST'>
+        <input name='username' placeholder='Username' />
+        <input name='password' type='password' placeholder='Password' />
+        <button type='submit'>Registrar</button>
+    </form>"
+}
+
+fn html_response(body: string) -> net.Response {
+    return net.Response {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+        body: "<!DOCTYPE html><html><head><title>Blog SEED</title></head><body>" + body + "</body></html>"
+    }
+}
+
+fn json_response(data: json.Value) -> net.Response {
+    return net.Response {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+        body: json.stringify(data).unwrap()
+    }
+}

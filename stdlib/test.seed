@@ -1,0 +1,143 @@
+module stdlib.test
+
+type Test = {
+    name: string
+    fn: fn() -> bool
+}
+
+type TestResults = {
+    total: int
+    passed: int
+    failed: int
+    failures: [string]
+}
+
+/// Define teste
+fn test(name: string, fn: fn() -> bool) {
+    let t = Test(name, fn)
+    test_registry.push(t)
+}
+
+let test_registry = []
+
+/// Roda todos
+fn run_all() -> TestResults {
+    let results = TestResults(0, 0, 0, [])
+    results.total = test_registry.len
+    
+    for t in test_registry {
+        print("Running: " + t.name + "... ")
+        let passed = t.fn()
+        if passed {
+            println("OK")
+            results.passed = results.passed + 1
+        } else {
+            println("FAILED")
+            results.failed = results.failed + 1
+            results.failures.push(t.name)
+        }
+    }
+    
+    println("\n" + results.passed.to_string() + "/" + results.total.to_string() + " tests passed")
+    if results.failed > 0 {
+        println("Failed tests:")
+        for name in results.failures {
+            println("  - " + name)
+        }
+    }
+    
+    return results
+}
+
+/// Asserção
+fn assert(condition: bool, msg: string) {
+    if !condition {
+        println("Assertion failed: " + msg)
+        return false
+    }
+    return true
+}
+
+/// Igualdade
+fn assert_eq[T](a: T, b: T) {
+    if a != b {
+        println("Assertion failed: " + a.to_string() + " != " + b.to_string())
+        return false
+    }
+    return true
+}
+
+/// Diferença
+fn assert_ne[T](a: T, b: T) {
+    if a == b {
+        println("Assertion failed: " + a.to_string() + " == " + b.to_string())
+        return false
+    }
+    return true
+}
+
+/// Deve lançar erro
+fn assert_throws(fn: fn()) {
+    let threw = false
+    try {
+        fn()
+    } catch {
+        threw = true
+    }
+    if !threw {
+        println("Assertion failed: expected function to throw")
+        return false
+    }
+    return true
+}
+
+/// Maior que
+fn assert_gt[T](a: T, b: T) {
+    if a <= b {
+        println("Assertion failed: " + a.to_string() + " <= " + b.to_string())
+        return false
+    }
+    return true
+}
+
+/// Menor que
+fn assert_lt[T](a: T, b: T) {
+    if a >= b {
+        println("Assertion failed: " + a.to_string() + " >= " + b.to_string())
+        return false
+    }
+    return true
+}
+
+/// Aproximadamente igual (para floats)
+fn assert_approx_eq(a: float, b: float, epsilon: float) {
+    let diff = math.abs(a - b)
+    if diff > epsilon {
+        println("Assertion failed: " + a.to_string() + " != " + b.to_string() + " (diff: " + diff.to_string() + ")")
+        return false
+    }
+    return true
+}
+
+/// Setup antes dos testes
+fn setup(fn: fn()) {
+    setup_fn = fn
+}
+
+let setup_fn = fn() {}
+
+/// Teardown depois dos testes
+fn teardown(fn: fn()) {
+    teardown_fn = fn
+}
+
+let teardown_fn = fn() {}
+
+/// Roda suite de testes
+fn run_suite(name: string) -> TestResults {
+    println("=== " + name + " ===")
+    setup_fn()
+    let results = run_all()
+    teardown_fn()
+    return results
+}

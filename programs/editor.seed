@@ -1,0 +1,11 @@
+module programs.editor
+
+import stdlib.io
+import stdlib.fs
+
+fn main(args) {
+    let file = args[0].or_else("scratch.seed")
+    let text = fs.read_text(file).or_else("")
+    io.println("SEED editor: " + file)
+    io.println(text)
+}

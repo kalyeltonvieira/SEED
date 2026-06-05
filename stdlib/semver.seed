@@ -1,0 +1,96 @@
+module stdlib.semver
+
+/// Semantic Versioning (SemVer) module
+
+pub type Version = {
+    major: int,
+    minor: int,
+    patch: int,
+    prerelease: string,
+    build: string
+}
+
+pub fn parse(s: string) -> Result[Version, string] {
+    let cleaned = s.trim()
+    if cleaned.starts_with("v") {
+        cleaned = cleaned.substring(1, cleaned.len)
+    }
+    
+    // Parse build metadata (if any)
+    let build = ""
+    if cleaned.contains("+") {
+        let parts = cleaned.split("+")
+        cleaned = parts[0]
+        build = parts[1]
+    }
+    
+    // Parse prerelease (if any)
+    let prerelease = ""
+    if cleaned.contains("-") {
+        let parts = cleaned.split("-")
+        cleaned = parts[0]
+        prerelease = parts[1]
+    }
+    
+    // Parse major, minor, patch
+    let version_parts = cleaned.split(".")
+    if version_parts.len != 3 {
+        return Err("Versão semântica inválida. Deve seguir o formato X.Y.Z")
+    }
+    
+    // Verify each part is numeric
+    for part in version_parts {
+        if part.len == 0 {
+            return Err("Variante de versão vazia")
+        }
+        for i in 0..part.len {
+            let c = part[i]
+            if c < "0" || c > "9" {
+                return Err("Variante de versão não numérica: " + part)
+            }
+        }
+    }
+    
+    let major = version_parts[0].to_int()
+    let minor = version_parts[1].to_int()
+    let patch = version_parts[2].to_int()
+    
+    return Ok(Version {
+        major: major,
+        minor: minor,
+        patch: patch,
+        prerelease: prerelease,
+        build: build
+    })
+}
+
+pub fn compare(a: Version, b: Version) -> int {
+    if a.major != b.major {
+        if a.major > b.major { return 1 } else { return -1 }
+    }
+    if a.minor != b.minor {
+        if a.minor > b.minor { return 1 } else { return -1 }
+    }
+    if a.patch != b.patch {
+        if a.patch > b.patch { return 1 } else { return -1 }
+    }
+    
+    // Handle prerelease comparison
+    // Normal versions have higher precedence than prereleases
+    if a.prerelease.len == 0 && b.prerelease.len > 0 { return 1 }
+    if a.prerelease.len > 0 && b.prerelease.len == 0 { return -1 }
+    if a.prerelease.len > 0 && b.prerelease.len > 0 {
+        if a.prerelease > b.prerelease { return 1 }
+        if a.prerelease < b.prerelease { return -1 }
+    }
+    
+    return 0
+}
+
+pub fn is_valid(s: string) -> bool {
+    let res = parse(s)
+    match res {
+        Ok(_) => return true
+        Err(_) => return false
+    }
+}

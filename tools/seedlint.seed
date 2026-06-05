@@ -1,0 +1,210 @@
+module seedlint
+
+import stdlib.io
+import stdlib.fs
+import stdlib.string
+import stdlib.cli
+
+/// Linter para código SEED
+/// Detecta variáveis não usadas, funções longas, complexidade alta, etc.
+
+type LintRule = {
+    name: string
+    description: string
+    severity: string
+}
+
+type LintIssue = {
+    file: string
+    line: int
+    column: int
+    rule: string
+    message: string
+    severity: string
+}
+
+type LintResult = {
+    file: string
+    issues: [LintIssue]
+}
+
+fn lint_file(path: string) -> LintResult {
+    let source = fs.read_file(path)
+    let lines = source.split("\n")
+    let issues = []
+    let variables = []
+    let used_variables = []
+    let function_stack = []
+    let current_function = ""
+    let function_start_line = 0
+    
+    for i in 0..lines.len {
+        let line = lines[i]
+        let trimmed = line.trim()
+        let line_num = i + 1
+        
+        // Track function definitions
+        if trimmed.starts_with("fn ") {
+            if current_function.len > 0 {
+                let fn_len = line_num - function_start_line
+                if fn_len > 50 {
+                    issues.push(LintIssue(path, function_start_line, 0, "long-function", 
+                        "Function '" + current_function + "' is " + fn_len.to_string() + " lines long (max: 50)", "warning"))
+                }
+            }
+            current_function = trimmed.substring(3, trimmed.len()).split("(")[0].trim()
+            function_start_line = line_num
+            function_stack.push(current_function)
+        }
+        
+        // Track variable declarations
+        if trimmed.contains("let ") && !trimmed.contains("fn ") {
+            let var_parts = trimmed.split("let ")
+            if var_parts.len > 1 {
+                let var_name = var_parts[1].split("=")[0].trim()
+                variables.push(var_name)
+            }
+        }
+        
+        // Track variable usage
+        for var in variables {
+            if line.contains(var) && !trimmed.starts_with("let " + var) {
+                if !used_variables.contains(var) {
+                    used_variables.push(var)
+                }
+            }
+        }
+        
+        // Check for dangerous patterns
+        if trimmed.contains("eval(") {
+            issues.push(LintIssue(path, line_num, 0, "dangerous-eval", 
+                "Use of eval() is dangerous", "error"))
+        }
+        
+        if trimmed.contains("unsafe") {
+            issues.push(LintIssue(path, line_num, 0, "unsafe-code", 
+                "Unsafe code detected", "warning"))
+        }
+        
+        // Check naming conventions
+        if trimmed.starts_with("fn ") {
+            let fn_name = trimmed.substring(3, trimmed.len()).split("(")[0].trim()
+            if fn_name.contains("_") && !fn_name.to_lower() == fn_name {
+                issues.push(LintIssue(path, line_num, 0, "naming-convention", 
+                    "Function name '" + fn_name + "' should use snake_case", "warning"))
+            }
+        }
+        
+        // Check for TODO/FIXME comments
+        if trimmed.contains("TODO") || trimmed.contains("FIXME") {
+            issues.push(LintIssue(path, line_num, 0, "todo-comment", 
+                "Unresolved TODO/FIXME comment", "info"))
+        }
+        
+        // Check for empty blocks
+        if trimmed == "{}" {
+            issues.push(LintIssue(path, line_num, 0, "empty-block", 
+                "Empty code block", "warning"))
+        }
+    }
+    
+    // Check for unused variables
+    for var in variables {
+        if !used_variables.contains(var) {
+            issues.push(LintIssue(path, 0, 0, "unused-variable", 
+                "Variable '" + var + "' is never used", "warning"))
+        }
+    }
+    
+    return LintResult(path, issues)
+}
+
+fn lint_directory(dir: string) -> [LintResult] {
+    let results = []
+    let files = fs.list_dir(dir)
+    
+    for file in files {
+        let path = dir + "\\" + file
+        if file.ends_with(".seed") {
+            results.push(lint_file(path))
+        } else if fs.metadata(path).is_dir {
+            results = results + lint_directory(path)
+        }
+    }
+    
+    return results
+}
+
+fn print_results(results: [LintResult]) {
+    let total_issues = 0
+    let errors = 0
+    let warnings = 0
+    let infos = 0
+    
+    for result in results {
+        if result.issues.len > 0 {
+            println(cli.color(result.file, "cyan"))
+            for issue in result.issues {
+                total_issues = total_issues + 1
+                let severity_color = match issue.severity {
+                    "error" => "red",
+                    "warning" => "yellow",
+                    "info" => "blue",
+                    _ => "white"
+                }
+                let prefix = match issue.severity {
+                    "error" => "ERROR",
+                    "warning" => "WARN",
+                    "info" => "INFO",
+                    _ => "NOTE"
+                }
+                
+                if issue.severity == "error" { errors = errors + 1 }
+                if issue.severity == "warning" { warnings = warnings + 1 }
+                if issue.severity == "info" { infos = infos + 1 }
+                
+                println("  " + cli.color(prefix, severity_color) + " [" + issue.rule + "] " + 
+                    result.file + ":" + issue.line.to_string() + ": " + issue.message)
+            }
+        }
+    }
+    
+    println("\n" + cli.color("Summary:", "white"))
+    println("  " + cli.color(errors.to_string() + " errors", "red"))
+    println("  " + cli.color(warnings.to_string() + " warnings", "yellow"))
+    println("  " + cli.color(infos.to_string() + " info", "blue"))
+    println("  Total: " + total_issues.to_string() + " issues")
+}
+
+fn main(args: [string]) {
+    let path = "."
+    let strict = false
+    
+    for i in 0..args.len {
+        if args[i] == "--strict" {
+            strict = true
+        } else if !args[i].starts_with("-") {
+            path = args[i]
+        }
+    }
+    
+    println("SEED Linter v1.0")
+    println("Linting: " + path)
+    
+    let results = if fs.metadata(path).is_file {
+        [lint_file(path)]
+    } else {
+        lint_directory(path)
+    }
+    
+    print_results(results)
+    
+    let has_errors = results.any(r => r.issues.any(i => i.severity == "error"))
+    if has_errors {
+        os.exit(1)
+    }
+    
+    if strict && results.any(r => r.issues.len > 0) {
+        os.exit(1)
+    }
+}

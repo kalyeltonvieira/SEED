@@ -1,0 +1,208 @@
+{
+  "name": "seed-language",
+  "displayName": "SEED Language",
+  "description": "Suporte completo para a linguagem SEED: sintaxe, autocomplete, snippets, tema, diagnosticos e integracao com o compilador.",
+  "version": "1.0.0",
+  "publisher": "seed",
+  "icon": "icons/seed-icon.png",
+  "license": "SEE LICENSE IN ../licenses/SEED_LICENSE.txt",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Snippets",
+    "Themes",
+    "Other"
+  ],
+  "keywords": [
+    "seed",
+    "language",
+    "compiler",
+    "syntax",
+    "theme"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "seed",
+        "aliases": [
+          "SEED",
+          "seed"
+        ],
+        "extensions": [
+          ".seed"
+        ],
+        "configuration": "./language-config.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "seed",
+        "scopeName": "source.seed",
+        "path": "./syntaxes/seed.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "seed",
+        "path": "./snippets/seed.json"
+      }
+    ],
+    "themes": [
+      {
+        "label": "SEED Dark",
+        "uiTheme": "vs-dark",
+        "path": "./themes/seed-dark.json"
+      }
+    ],
+    "iconThemes": [
+      {
+        "id": "seed-file-icons",
+        "label": "SEED File Icons",
+        "path": "./icons/seed-icon-theme.json"
+      }
+    ],
+    "configuration": {
+      "title": "SEED",
+      "properties": {
+        "seed.compilerPath": {
+          "type": "string",
+          "default": "D:\\\\SEED\\\\seed.exe",
+          "description": "Caminho absoluto para o compilador SEED."
+        },
+        "seed.testsPath": {
+          "type": "string",
+          "default": "D:\\\\SEED\\\\tests\\\\seed_selftest.seed",
+          "description": "Arquivo de testes padrao executado por SEED: Rodar testes."
+        },
+        "seed.outputDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "Diretorio para bytecode gerado. Vazio usa a pasta do arquivo atual."
+        },
+        "seed.showWelcomeOnFirstSeedFile": {
+          "type": "boolean",
+          "default": true,
+          "description": "Mostra a pagina de boas-vindas quando o primeiro arquivo .seed for aberto."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "seed.compileFile",
+        "title": "SEED: Compilar arquivo",
+        "category": "SEED"
+      },
+      {
+        "command": "seed.runProgram",
+        "title": "SEED: Executar programa",
+        "category": "SEED"
+      },
+      {
+        "command": "seed.runTests",
+        "title": "SEED: Rodar testes",
+        "category": "SEED"
+      },
+      {
+        "command": "seed.formatDocument",
+        "title": "SEED: Formatar documento",
+        "category": "SEED"
+      },
+      {
+        "command": "seed.showDreams",
+        "title": "SEED: Mostrar painel de sonhos",
+        "category": "SEED"
+      },
+      {
+        "command": "seed.showWelcome",
+        "title": "SEED: Mostrar boas-vindas",
+        "category": "SEED"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "seed.compileFile",
+        "key": "ctrl+shift+b",
+        "when": "editorLangId == seed"
+      },
+      {
+        "command": "seed.runProgram",
+        "key": "f5",
+        "when": "editorLangId == seed"
+      },
+      {
+        "command": "seed.runTests",
+        "key": "ctrl+shift+t",
+        "when": "editorLangId == seed"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "seed.compileFile"
+        },
+        {
+          "command": "seed.runProgram"
+        },
+        {
+          "command": "seed.runTests"
+        },
+        {
+          "command": "seed.formatDocument"
+        },
+        {
+          "command": "seed.showDreams"
+        },
+        {
+          "command": "seed.showWelcome"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "seed.compileFile",
+          "when": "editorLangId == seed",
+          "group": "navigation"
+        },
+        {
+          "command": "seed.runProgram",
+          "when": "editorLangId == seed",
+          "group": "navigation"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "seed.compileFile",
+          "when": "editorLangId == seed",
+          "group": "seed"
+        },
+        {
+          "command": "seed.runTests",
+          "when": "editorLangId == seed",
+          "group": "seed"
+        },
+        {
+          "command": "seed.showDreams",
+          "when": "editorLangId == seed",
+          "group": "seed"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "node out/test/suite.js",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.41",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.15.0",
+    "typescript": "^5.4.0"
+  }
+}

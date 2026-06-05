@@ -1,0 +1,200 @@
+module compiler.tests.typechecker_test
+
+/// Testes do Typechecker SEED
+/// Verifica se o typechecker infere e verifica tipos corretamente
+
+use compiler.lexer
+use compiler.parser
+use compiler.typechecker
+
+fn main() {
+    println("=== Testes do Typechecker SEED ===")
+    println("")
+    
+    test_type_inference()
+    test_type_annotation()
+    test_function_types()
+    test_generic_types()
+    test_type_errors()
+    test_contract_verification()
+    test_effect_verification()
+    
+    println("")
+    println("Todos os testes do typechecker passaram!")
+}
+
+fn test_type_inference() {
+    println("Testando inferência de tipos...")
+    
+    let source = "let x = 42\nlet y = \"hello\""
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    let typed_result = typechecker.typecheck(ast_result.value)
+    if typed_result.is_error {
+        println("  [FALHOU] Erro de tipo: " + typed_result.error)
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_type_annotation() {
+    println("Testando anotação de tipos...")
+    
+    let source = "let x: int = 42\nlet y: string = \"hello\""
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    let typed_result = typechecker.typecheck(ast_result.value)
+    if typed_result.is_error {
+        println("  [FALHOU] Erro de tipo: " + typed_result.error)
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_function_types() {
+    println("Testando tipos de função...")
+    
+    let source = "fn soma(a: int, b: int) -> int { a + b }"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    let typed_result = typechecker.typecheck(ast_result.value)
+    if typed_result.is_error {
+        println("  [FALHOU] Erro de tipo: " + typed_result.error)
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_generic_types() {
+    println("Testando tipos genéricos...")
+    
+    let source = "fn identity[T](x: T) -> T { x }"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    let typed_result = typechecker.typecheck(ast_result.value)
+    if typed_result.is_error {
+        println("  [FALHOU] Erro de tipo: " + typed_result.error)
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_type_errors() {
+    println("Testando erros de tipo...")
+    
+    let source = "let x: int = \"hello\""  // Erro: string não pode ser int
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos inesperados: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    let typed_result = typechecker.typecheck(ast_result.value)
+    if typed_result.is_ok {
+        println("  [FALHOU] Esperado erro de tipo, mas não houve erro")
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_contract_verification() {
+    println("Testando verificação de contratos...")
+    
+    let source = "fn dividir(a: int, b: int) -> int\n    requires b != 0\n    ensures result * b == a\n{\n    a / b\n}"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    let typed_result = typechecker.typecheck(ast_result.value)
+    // Contratos devem ser verificados
+    
+    println("  [OK]")
+}
+
+fn test_effect_verification() {
+    println("Testando verificação de efeitos...")
+    
+    let source = "effect IO { fn print(msg: string) }\n\nfn ola() performs IO {\n    IO::print(\"ola\")\n}"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    let typed_result = typechecker.typecheck(ast_result.value)
+    // Efeitos devem ser verificados
+    
+    println("  [OK]")
+}

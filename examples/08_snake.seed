@@ -1,0 +1,160 @@
+module snake
+
+import stdlib.io
+import stdlib.time
+import stdlib.string
+
+/// Jogo da cobrinha no terminal
+const WIDTH = 40
+const HEIGHT = 20
+
+type Position = {
+    x: int
+    y: int
+}
+
+type Snake = {
+    body: List[Position]
+    direction: Position
+    food: Position
+}
+
+fn create_snake() -> Snake {
+    let body = List[Position]()
+    body.push(Position { x: 10, y: 10 })
+    body.push(Position { x: 9, y: 10 })
+    body.push(Position { x: 8, y: 10 })
+    
+    return Snake {
+        body: body,
+        direction: Position { x: 1, y: 0 },
+        food: spawn_food()
+    }
+}
+
+fn spawn_food() -> Position {
+    return Position {
+        x: math.random_range(1, WIDTH - 1),
+        y: math.random_range(1, HEIGHT - 1)
+    }
+}
+
+fn render(snake: Snake, score: int) -> string {
+    let output = ""
+    
+    // Top border
+    output = output + "+" + "-" * WIDTH + "+\n"
+    
+    for y in 0..HEIGHT {
+        output = output + "|"
+        for x in 0..WIDTH {
+            if x == 0 || x == WIDTH - 1 || y == 0 || y == HEIGHT - 1 {
+                output = output + "#"
+            } else if snake.food.x == x && snake.food.y == y {
+                output = output + "@"
+            } else {
+                let is_snake = false
+                for segment in snake.body {
+                    if segment.x == x && segment.y == y {
+                        output = output + "O"
+                        is_snake = true
+                        break
+                    }
+                }
+                if !is_snake {
+                    output = output + " "
+                }
+            }
+        }
+        output = output + "|\n"
+    }
+    
+    // Bottom border
+    output = output + "+" + "-" * WIDTH + "+\n"
+    output = output + "Score: " + score.to_string() + "\n"
+    output = output + "WASD para mover, Q para sair\n"
+    
+    return output
+}
+
+fn move_snake(snake: Snake) -> Snake {
+    let head = snake.body.get(0).unwrap()
+    let new_head = Position {
+        x: head.x + snake.direction.x,
+        y: head.y + snake.direction.y
+    }
+    
+    // Check wall collision
+    if new_head.x <= 0 || new_head.x >= WIDTH - 1 || 
+       new_head.y <= 0 || new_head.y >= HEIGHT - 1 {
+        return snake
+    }
+    
+    // Check self collision
+    for segment in snake.body {
+        if segment.x == new_head.x && segment.y == new_head.y {
+            return snake
+        }
+    }
+    
+    snake.body.insert(0, new_head)
+    
+    // Check food
+    if new_head.x == snake.food.x && new_head.y == snake.food.y {
+        snake.food = spawn_food()
+    } else {
+        snake.body.pop()
+    }
+    
+    return snake
+}
+
+fn change_direction(snake: Snake, key: string) -> Snake {
+    match key {
+        "w" => if snake.direction.y != 1 { snake.direction = Position { x: 0, y: -1 } }
+        "s" => if snake.direction.y != -1 { snake.direction = Position { x: 0, y: 1 } }
+        "a" => if snake.direction.x != 1 { snake.direction = Position { x: -1, y: 0 } }
+        "d" => if snake.direction.x != -1 { snake.direction = Position { x: 1, y: 0 } }
+    }
+    return snake
+}
+
+fn clear_screen() {
+    print("\033[2J\033[H")
+}
+
+fn main() {
+    println("=== Snake Game ===")
+    println("Pressione qualquer tecla para começar...")
+    read_line()
+    
+    let snake = create_snake()
+    let score = 0
+    let running = true
+    
+    // Non-blocking input would be needed for real-time control
+    // This is a simplified version
+    
+    while running {
+        clear_screen()
+        println(render(snake, score))
+        
+        let key = read_line().trim().to_lower()
+        
+        if key == "q" {
+            running = false
+        } else {
+            snake = change_direction(snake, key)
+            snake = move_snake(snake)
+            
+            if snake.body.get(0).unwrap().x == snake.food.x && 
+               snake.body.get(0).unwrap().y == snake.food.y {
+                score = score + 10
+            }
+        }
+        
+        time.sleep(100)
+    }
+    
+    println("Game Over! Score: " + score.to_string())
+}

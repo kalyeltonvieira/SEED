@@ -1,0 +1,99 @@
+module stdlib.datetime
+
+/// Date and time module
+
+pub type Date = {
+    year: int,
+    month: int,
+    day: int
+}
+
+pub type Time = {
+    hour: int,
+    minute: int,
+    second: int,
+    nanosecond: int
+}
+
+pub type DateTime = {
+    date: Date,
+    time: Time,
+    timezone: string
+}
+
+pub fn now() -> DateTime {
+    return syscall.datetime_now()
+}
+
+pub fn utc_now() -> DateTime {
+    return syscall.datetime_utc_now()
+}
+
+pub fn from_timestamp(ts: int) -> DateTime {
+    return syscall.datetime_from_timestamp(ts)
+}
+
+pub fn to_timestamp(dt: DateTime) -> int {
+    return syscall.datetime_to_timestamp(dt)
+}
+
+pub fn format(dt: DateTime, fmt: string) -> string {
+    return syscall.datetime_format(dt, fmt)
+}
+
+pub fn parse(s: string, fmt: string) -> DateTime {
+    return syscall.datetime_parse(s, fmt)
+}
+
+pub fn add_days(dt: DateTime, days: int) -> DateTime {
+    return syscall.datetime_add_days(dt, days)
+}
+
+pub fn add_hours(dt: DateTime, hours: int) -> DateTime {
+    return syscall.datetime_add_hours(dt, hours)
+}
+
+pub fn add_minutes(dt: DateTime, minutes: int) -> DateTime {
+    return syscall.datetime_add_minutes(dt, minutes)
+}
+
+pub fn add_seconds(dt: DateTime, seconds: int) -> DateTime {
+    return syscall.datetime_add_seconds(dt, seconds)
+}
+
+pub fn diff(a: DateTime, b: DateTime) -> Duration {
+    return syscall.datetime_diff(a, b)
+}
+
+pub fn today() -> Date {
+    return syscall.datetime_today()
+}
+
+pub fn is_leap_year(year: int) -> bool {
+    return syscall.datetime_is_leap_year(year)
+}
+
+pub fn days_in_month(year: int, month: int) -> int {
+    return syscall.datetime_days_in_month(year, month)
+}
+
+pub fn weekday(dt: DateTime) -> int {
+    return syscall.datetime_weekday(dt)
+}
+
+pub type Duration = {
+    seconds: int,
+    nanoseconds: int
+}
+
+pub fn duration(seconds: int, nanoseconds: int) -> Duration {
+    return Duration { seconds: seconds, nanoseconds: nanoseconds }
+}
+
+pub fn to_seconds(d: Duration) -> int {
+    return d.seconds
+}
+
+pub fn to_milliseconds(d: Duration) -> int {
+    return d.seconds * 1000 + d.nanoseconds / 1000000
+}

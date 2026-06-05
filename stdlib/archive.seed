@@ -1,0 +1,181 @@
+module stdlib.archive
+
+import stdlib.fs
+import stdlib.path
+
+/// TAR Archiving and Extraction module
+
+pub type TarEntry = {
+    name: string,
+    size: int,
+    is_dir: bool,
+    data: string
+}
+
+pub fn create_tar(files: [string]) -> Result[string, string] {
+    let result = ""
+    
+    for file_path in files {
+        let content = fs.read_text(file_path)?
+        let size = content.len()
+        
+        // Header block (512 bytes)
+        let header = ""
+        
+        // 1. File name (100 bytes)
+        let name = path.basename(file_path)
+        header = header + name
+        while header.len < 100 {
+            header = header + "\0"
+        }
+        
+        // 2. File mode (8 bytes)
+        header = header + "0000644\0"
+        
+        // 3. User ID (8 bytes)
+        header = header + "0000000\0"
+        
+        // 4. Group ID (8 bytes)
+        header = header + "0000000\0"
+        
+        // 5. Size (12 bytes octal)
+        header = header + to_octal(size, 12)
+        
+        // 6. Mtime (12 bytes octal)
+        header = header + "00000000000\0"
+        
+        // 7. Checksum (8 bytes) - initially spaces
+        header = header + "        "
+        
+        // 8. Type flag (1 byte) - '0' for normal file
+        header = header + "0"
+        
+        // 9. Link name (100 bytes)
+        for i in 0..100 {
+            header = header + "\0"
+        }
+        
+        // Fill header to 512 bytes with zeros
+        while header.len < 512 {
+            header = header + "\0"
+        }
+        
+        // Calculate checksum: sum of all 512 bytes in header
+        let sum = 0
+        for i in 0..512 {
+            sum = sum + header[i].to_int()
+        }
+        
+        // Replace checksum field (offset 148 to 155) with computed octal checksum
+        let checksum_str = to_octal(sum, 7) + " " // 6 octal digits + null + space
+        header = header.substring(0, 148) + checksum_str + header.substring(156, 512)
+        
+        result = result + header
+        
+        // Data blocks
+        result = result + content
+        let remainder = size % 512
+        if remainder != 0 {
+            let padding = 512 - remainder
+            for i in 0..padding {
+                result = result + "\0"
+            }
+        }
+    }
+    
+    // TAR archive finishes with two 512-byte blocks of all zeros
+    for i in 0..1024 {
+        result = result + "\0"
+    }
+    
+    return Ok(result)
+}
+
+pub fn extract_tar(tar_data: string, dest_dir: string) -> Result[bool, string] {
+    let offset = 0
+    
+    while offset + 512 <= tar_data.len {
+        let header = tar_data.substring(offset, offset + 512)
+        
+        // Check if it's the end of the archive (all zeros in header)
+        let all_zeros = true
+        for i in 0..512 {
+            if header[i] != "\0" {
+                all_zeros = false
+                break
+            }
+        }
+        if all_zeros {
+            break
+        }
+        
+        // Get file name (first null or 100 bytes)
+        let name = ""
+        for i in 0..100 {
+            if header[i] == "\0" {
+                break
+            }
+            name = name + header[i]
+        }
+        
+        if name.len() == 0 {
+            break
+        }
+        
+        // Get size (offset 124 to 135, octal)
+        let size_str = header.substring(124, 135).trim()
+        let size = from_octal(size_str)
+        
+        offset = offset + 512
+        
+        // Get data
+        let file_data = tar_data.substring(offset, offset + size)
+        
+        // Write to destination
+        let dest_path = path.join([dest_dir, name])
+        fs.write_text(dest_path, file_data)
+        
+        // Skip data blocks
+        let blocks = size / 512
+        if size % 512 != 0 {
+            blocks = blocks + 1
+        }
+        offset = offset + blocks * 512
+    }
+    
+    return Ok(true)
+}
+
+fn to_octal(val: int, length: int) -> string {
+    if val == 0 {
+        let result = ""
+        while result.len < length - 1 {
+            result = "0" + result
+        }
+        return result + "\0"
+    }
+    
+    let result = ""
+    let temp = val
+    while temp > 0 {
+        let remainder = temp % 8
+        result = remainder.to_string() + result
+        temp = temp / 8
+    }
+    
+    while result.len < length - 1 {
+        result = "0" + result
+    }
+    return result + "\0"
+}
+
+fn from_octal(octal_str: string) -> int {
+    let val = 0
+    for i in 0..octal_str.len {
+        let char = octal_str[i]
+        if char >= "0" && char <= "7" {
+            val = val * 8 + (char.to_int() - "0".to_int())
+        }
+    }
+    return val
+}

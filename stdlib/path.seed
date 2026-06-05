@@ -1,0 +1,64 @@
+module stdlib.path
+
+/// Path manipulation module
+
+pub fn join(parts: [string]) -> string {
+    return parts.join("\\")
+}
+
+pub fn normalize(path: string) -> string {
+    return syscall.path_normalize(path)
+}
+
+pub fn absolute(path: string) -> string {
+    return syscall.path_absolute(path)
+}
+
+pub fn relative(from: string, to: string) -> string {
+    return syscall.path_relative(from, to)
+}
+
+pub fn dirname(path: string) -> string {
+    let parts = path.split("\\")
+    parts.pop()
+    return parts.join("\\")
+}
+
+pub fn basename(path: string) -> string {
+    return path.split("\\").last().split("/").last()
+}
+
+pub fn extension(path: string) -> string {
+    let name = basename(path)
+    let parts = name.split(".")
+    if parts.len > 1 {
+        return parts.last()
+    }
+    return ""
+}
+
+pub fn stem(path: string) -> string {
+    let name = basename(path)
+    let parts = name.split(".")
+    if parts.len > 1 {
+        parts.pop()
+        return parts.join(".")
+    }
+    return name
+}
+
+pub fn is_absolute(path: string) -> bool {
+    return syscall.path_is_absolute(path)
+}
+
+pub fn is_relative(path: string) -> bool {
+    return !is_absolute(path)
+}
+
+pub fn resolve(path: string) -> string {
+    return syscall.path_resolve(path)
+}
+
+pub fn exists(path: string) -> bool {
+    return syscall.path_exists(path)
+}

@@ -1,0 +1,56 @@
+module stdlib.cache
+
+/// Caching module
+
+pub type Cache<K, V> = {
+    data: Map<K, V>,
+    max_size: int,
+    ttl: int
+}
+
+pub fn cache<K, V>(max_size: int, ttl: int) -> Cache<K, V> {
+    return Cache {
+        data: map_new(),
+        max_size: max_size,
+        ttl: ttl
+    }
+}
+
+pub fn get<K, V>(c: &Cache<K, V>, key: K) -> Option<V> {
+    return map_get(c.data, key)
+}
+
+pub fn set<K, V>(c: &mut Cache<K, V>, key: K, value: V) {
+    if c.data.len >= c.max_size {
+        evict(c)
+    }
+    map_set(c.data, key, value)
+}
+
+pub fn remove<K, V>(c: &mut Cache<K, V>, key: K) -> Option<V> {
+    return map_remove(c.data, key)
+}
+
+pub fn has<K, V>(c: &Cache<K, V>, key: K) -> bool {
+    return map_has(c.data, key)
+}
+
+pub fn clear<K, V>(c: &mut Cache<K, V>) {
+    c.data = map_new()
+}
+
+pub fn size<K, V>(c: &Cache<K, V>) -> int {
+    return map_len(c.data)
+}
+
+pub fn is_empty<K, V>(c: &Cache<K, V>) -> bool {
+    return map_len(c.data) == 0
+}
+
+fn evict<K, V>(c: &mut Cache<K, V>) {
+    // Simple LRU: remove first key
+    let keys = map_keys(c.data)
+    if keys.len > 0 {
+        map_remove(c.data, keys[0])
+    }
+}

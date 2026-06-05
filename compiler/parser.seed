@@ -1,0 +1,999 @@
+module compiler.parser
+
+import compiler.lexer
+
+/// Analisador Sintático para SEED
+/// Transforma tokens em AST com precedência de operadores e recuperação de erros
+
+type ASTNode = {
+    type: string
+    value: any
+    children: [ASTNode]
+    line: int
+    column: int
+}
+
+type Parser = {
+    tokens: [Token]
+    position: int
+    errors: [string]
+    ast: ASTNode
+}
+
+fn parser(tokens: [Token]) -> Parser {
+    return Parser {
+        tokens: tokens,
+        position: 0,
+        errors: [],
+        ast: null
+    }
+}
+
+fn parse(p: Parser) -> ASTNode {
+    p.ast = parse_module(p)
+    return p.ast
+}
+
+fn peek(p: Parser) -> Token {
+    if p.position >= p.tokens.len {
+        return Token {
+            type: EOF,
+            lexeme: "",
+            line: 0,
+            column: 0,
+            position: 0
+        }
+    }
+    return p.tokens[p.position]
+}
+
+fn advance(p: Parser) {
+    p.position = p.position + 1
+}
+
+fn expect(p: Parser, lexeme: string) -> bool {
+    if peek(p).lexeme == lexeme {
+        advance(p)
+        return true
+    }
+    error(p, "Esperado '" + lexeme + "', encontrado '" + peek(p).lexeme + "'")
+    return false
+}
+
+fn error(p: Parser, message: string) {
+    let token = peek(p)
+    let error_msg = "Erro sintático na linha " + token.line.to_string() + ", coluna " + token.column.to_string() + ": " + message
+    p.errors.push(error_msg)
+}
+
+// Module parsing
+fn parse_module(p: Parser) -> ASTNode {
+    let node = ASTNode {
+        type: "Module",
+        value: null,
+        children: [],
+        line: 0,
+        column: 0
+    }
+    
+    while peek(p).type.name != "EOF" {
+        if peek(p).lexeme == "module" {
+            node.children.push(parse_module_declaration(p))
+        } else if peek(p).lexeme == "import" {
+            node.children.push(parse_import(p))
+        } else if peek(p).lexeme == "fn" {
+            node.children.push(parse_function(p))
+        } else if peek(p).lexeme == "type" {
+            node.children.push(parse_type_declaration(p))
+        } else if peek(p).lexeme == "struct" {
+            node.children.push(parse_struct(p))
+        } else if peek(p).lexeme == "enum" {
+            node.children.push(parse_enum(p))
+        } else if peek(p).lexeme == "let" || peek(p).lexeme == "const" {
+            node.children.push(parse_declaration(p))
+        } else {
+            advance(p) // Skip unknown
+        }
+    }
+    
+    return node
+}
+
+fn parse_module_declaration(p: Parser) -> ASTNode {
+    let start_line = peek(p).line
+    let start_column = peek(p).column
+    
+    advance(p) // Skip 'module'
+    
+    let name = peek(p).lexeme
+    advance(p)
+    
+    return ASTNode {
+        type: "ModuleDeclaration",
+        value: name,
+        children: [],
+        line: start_line,
+        column: start_column
+    }
+}
+
+fn parse_import(p: Parser) -> ASTNode {
+    let start_line = peek(p).line
+    let start_column = peek(p).column
+    
+    advance(p) // Skip 'import'
+    
+    let module_name = peek(p).lexeme
+    advance(p)
+    
+    return ASTNode {
+        type: "Import",
+        value: module_name,
+        children: [],
+        line: start_line,
+        column: start_column
+    }
+}
+
+// Function parsing
+fn parse_function(p: Parser) -> ASTNode {
+    let start_line = peek(p).line
+    let start_column = peek(p).column
+    
+    advance(p) // Skip 'fn'
+    
+    let name = peek(p).lexeme
+    advance(p)
+    
+    expect(p, "(")
+    let params = parse_parameters(p)
+    expect(p, ")")
+    
+    let return_type = null
+    if peek(p).lexeme == "->" {
+        advance(p)
+        return_type = parse_type(p)
+    }
+    
+    let body = parse_block(p)
+    
+    return ASTNode {
+        type: "Function",
+        value: name,
+        children: [params, return_type, body],
+        line: start_line,
+        column: start_column
+    }
+}
+
+fn parse_parameters(p: Parser) -> ASTNode {
+    let node = ASTNode {
+        type: "Parameters",
+        value: null,
+        children: [],
+        line: peek(p).line,
+        column: peek(p).column
+    }
+    
+    while peek(p).lexeme != ")" {
+        node.children.push(parse_parameter(p))
+        
+        if peek(p).lexeme == "," {
+            advance(p)
+        }
+    }
+    
+    return node
+}
+
+fn parse_parameter(p: Parser) -> ASTNode {
+    let name = peek(p).lexeme
+    advance(p)
+    
+    let param_type = null
+    if peek(p).lexeme == ":" {
+        advance(p)
+        param_type = parse_type(p)
+    }
+    
+    return ASTNode {
+        type: "Parameter",
+        value: name,
+        children: [param_type],
+        line: peek(p).line,
+        column: peek(p).column
+    }
+}
+
+// Type parsing
+fn parse_type(p: Parser) -> ASTNode {
+    let start_line = peek(p).line
+    let start_column = peek(p).column
+    
+    if peek(p).lexeme == "[" {
+        advance(p)
+        let inner = parse_type(p)
+        expect(p, "]")
+        
+        return ASTNode {
+            type: "ArrayType",
+            value: null,
+            children: [inner],
+            line: start_line,
+            column: start_column
+        }
+    }
+    
+    if peek(p).lexeme == "(" {
+        advance(p)
+        let params = parse_type_list(p)
+        expect(p, ")")
+        
+        let return_type = null
+        if peek(p).lexeme == "->" {
+            advance(p)
+            return_type = parse_type(p)
+        }
+        
+        return ASTNode {
+            type: "FunctionType",
+            value: null,
+            children: [params, return_type],
+            line: start_line,
+            column: start_column
+        }
+    }
+    
+    let name = peek(p).lexeme
+    advance(p)
+    
+    let type_args = []
+    if peek(p).lexeme == "[" {
+        advance(p)
+        while peek(p).lexeme != "]" {
+            type_args.push(parse_type(p))
+            if peek(p).lexeme == "," {
+                advance(p)
+            }
+        }
+        expect(p, "]")
+    }
+    
+    return ASTNode {
+        type: "NamedType",
+        value: name,
+        children: type_args,
+        line: start_line,
+        column: start_column
+    }
+}
+
+fn parse_type_list(p: Parser) -> ASTNode {
+    let node = ASTNode {
+        type: "TypeList",
+        value: null,
+        children: [],
+        line: peek(p).line,
+        column: peek(p).column
+    }
+    
+    while peek(p).lexeme != ")" {
+        node.children.push(parse_type(p))
+        
+        if peek(p).lexeme == "," {
+            advance(p)
+        }
+    }
+    
+    return node
+}
+
+// Block parsing
+fn parse_block(p: Parser) -> ASTNode {
+    let start_line = peek(p).line
+    let start_column = peek(p).column
+    
+    expect(p, "{")
+    
+    let node = ASTNode {
+        type: "Block",
+        value: null,
+        children: [],
+        line: start_line,
+        column: start_column
+    }
+    
+    while peek(p).lexeme != "}" {
+        node.children.push(parse_statement(p))
+    }
+    
+    expect(p, "}")
+    
+    return node
+}
+
+// Statement parsing
+fn parse_statement(p: Parser) -> ASTNode {
+    let token = peek(p)
+    
+    match token.lexeme {
+        "let" | "const" => return parse_declaration(p)
+        "if" => return parse_if(p)
+        "for" => return parse_for(p)
+        "while" => return parse_while(p)
+        "return" => return parse_return(p)
+        "match" => return parse_match(p)
+        "{" => return parse_block(p)
+        _ => return parse_expression_statement(p)
+    }
+}
+
+fn parse_declaration(p: Parser) -> ASTNode {
+    let start_line = peek(p).line
+    let start_column = peek(p).column
+    
+    let is_const = peek(p).lexeme == "const"
+    advance(p)
+    
+    let name = peek(p).lexeme
+    advance(p)
+    
+    let decl_type = null
+    if peek(p).lexeme == ":" {
+        advance(p)
+        decl_type = parse_type(p)
+    }
+    
+    let init = null
+    if peek(p).lexeme == "=" {
+        advance(p)
+        init = parse_expression(p)
+    }
+    
+    expect(p, ";")
+    
+    return ASTNode {
+        type: if is_const { "ConstDeclaration" } else { "LetDeclaration" },
+        value: name,
+        children: [decl_type, init],
+        line: start_line,
+        column: start_column
+    }
+}
+
+fn parse_if(p: Parser) -> ASTNode {
+    let start_line = peek(p).line
+    let start_column = peek(p).column
+    
+    advance(p) // Skip 'if'
+    
+    let condition = parse_expression(p)
+    let then_branch = parse_block(p)
+    
+    let else_branch = null
+    if peek(p).lexeme == "else" {
+        advance(p)
+        else_branch = parse_block(p)
+    }
+    
+    return ASTNode {
+        type: "If",
+        value: null,
+        children: [condition, then_branch, else_branch],
+        line: start_line,
+        column: start_column
+    }
+}
+
+fn parse_for(p: Parser) -> ASTNode {
+    let start_line = peek(p).line
+    let start_column = peek(p).column
+    
+    advance(p) // Skip 'for'
+    
+    let pattern = parse_pattern(p)
+    expect(p, "in")
+    let iterable = parse_expression(p)
+    let body = parse_block(p)
+    
+    return ASTNode {
+        type: "For",
+        value: null,
+        children: [pattern, iterable, body],
+        line: start_line,
+        column: start_column
+    }
+}
+
+fn parse_while(p: Parser) -> ASTNode {
+    let start_line = peek(p).line
+    let start_column = peek(p).column
+    
+    advance(p) // Skip 'while'
+    
+    let condition = parse_expression(p)
+    let body = parse_block(p)
+    
+    return ASTNode {
+        type: "While",
+        value: null,
+        children: [condition, body],
+        line: start_line,
+        column: start_column
+    }
+}
+
+fn parse_return(p: Parser) -> ASTNode {
+    let start_line = peek(p).line
+    let start_column = peek(p).column
+    
+    advance(p) // Skip 'return'
+    
+    let value = null
+    if peek(p).lexeme != ";" {
+        value = parse_expression(p)
+    }
+    
+    expect(p, ";")
+    
+    return ASTNode {
+        type: "Return",
+        value: null,
+        children: [value],
+        line: start_line,
+        column: start_column
+    }
+}
+
+fn parse_match(p: Parser) -> ASTNode {
+    let start_line = peek(p).line
+    let start_column = peek(p).column
+    
+    advance(p) // Skip 'match'
+    
+    let value = parse_expression(p)
+    expect(p, "{")
+    
+    let node = ASTNode {
+        type: "Match",
+        value: null,
+        children: [value],
+        line: start_line,
+        column: start_column
+    }
+    
+    while peek(p).lexeme != "}" {
+        node.children.push(parse_match_arm(p))
+    }
+    
+    expect(p, "}")
+    
+    return node
+}
+
+fn parse_match_arm(p: Parser) -> ASTNode {
+    let pattern = parse_pattern(p)
+    expect(p, "=>")
+    let body = parse_expression(p)
+    expect(p, ",")
+    
+    return ASTNode {
+        type: "MatchArm",
+        value: null,
+        children: [pattern, body],
+        line: peek(p).line,
+        column: peek(p).column
+    }
+}
+
+fn parse_pattern(p: Parser) -> ASTNode {
+    let start_line = peek(p).line
+    let start_column = peek(p).column
+    
+    if peek(p).lexeme == "_" {
+        advance(p)
+        return ASTNode {
+            type: "WildcardPattern",
+            value: "_",
+            children: [],
+            line: start_line,
+            column: start_column
+        }
+    }
+    
+    let name = peek(p).lexeme
+    advance(p)
+    
+    return ASTNode {
+        type: "IdentifierPattern",
+        value: name,
+        children: [],
+        line: start_line,
+        column: start_column
+    }
+}
+
+fn parse_expression_statement(p: Parser) -> ASTNode {
+    let expr = parse_expression(p)
+    expect(p, ";")
+    return expr
+}
+
+// Expression parsing with precedence
+fn parse_expression(p: Parser) -> ASTNode {
+    return parse_assignment(p)
+}
+
+fn parse_assignment(p: Parser) -> ASTNode {
+    let left = parse_logical_or(p)
+    
+    if peek(p).lexeme == "=" {
+        let op = peek(p).lexeme
+        advance(p)
+        let right = parse_assignment(p)
+        
+        return ASTNode {
+            type: "BinaryOp",
+            value: op,
+            children: [left, right],
+            line: left.line,
+            column: left.column
+        }
+    }
+    
+    return left
+}
+
+fn parse_logical_or(p: Parser) -> ASTNode {
+    let left = parse_logical_and(p)
+    
+    while peek(p).lexeme == "||" {
+        let op = peek(p).lexeme
+        advance(p)
+        let right = parse_logical_and(p)
+        
+        left = ASTNode {
+            type: "BinaryOp",
+            value: op,
+            children: [left, right],
+            line: left.line,
+            column: left.column
+        }
+    }
+    
+    return left
+}
+
+fn parse_logical_and(p: Parser) -> ASTNode {
+    let left = parse_equality(p)
+    
+    while peek(p).lexeme == "&&" {
+        let op = peek(p).lexeme
+        advance(p)
+        let right = parse_equality(p)
+        
+        left = ASTNode {
+            type: "BinaryOp",
+            value: op,
+            children: [left, right],
+            line: left.line,
+            column: left.column
+        }
+    }
+    
+    return left
+}
+
+fn parse_equality(p: Parser) -> ASTNode {
+    let left = parse_comparison(p)
+    
+    while peek(p).lexeme == "==" || peek(p).lexeme == "!=" {
+        let op = peek(p).lexeme
+        advance(p)
+        let right = parse_comparison(p)
+        
+        left = ASTNode {
+            type: "BinaryOp",
+            value: op,
+            children: [left, right],
+            line: left.line,
+            column: left.column
+        }
+    }
+    
+    return left
+}
+
+fn parse_comparison(p: Parser) -> ASTNode {
+    let left = parse_additive(p)
+    
+    while peek(p).lexeme == "<" || peek(p).lexeme == ">" || peek(p).lexeme == "<=" || peek(p).lexeme == ">=" {
+        let op = peek(p).lexeme
+        advance(p)
+        let right = parse_additive(p)
+        
+        left = ASTNode {
+            type: "BinaryOp",
+            value: op,
+            children: [left, right],
+            line: left.line,
+            column: left.column
+        }
+    }
+    
+    return left
+}
+
+fn parse_additive(p: Parser) -> ASTNode {
+    let left = parse_multiplicative(p)
+    
+    while peek(p).lexeme == "+" || peek(p).lexeme == "-" {
+        let op = peek(p).lexeme
+        advance(p)
+        let right = parse_multiplicative(p)
+        
+        left = ASTNode {
+            type: "BinaryOp",
+            value: op,
+            children: [left, right],
+            line: left.line,
+            column: left.column
+        }
+    }
+    
+    return left
+}
+
+fn parse_multiplicative(p: Parser) -> ASTNode {
+    let left = parse_unary(p)
+    
+    while peek(p).lexeme == "*" || peek(p).lexeme == "/" || peek(p).lexeme == "%" {
+        let op = peek(p).lexeme
+        advance(p)
+        let right = parse_unary(p)
+        
+        left = ASTNode {
+            type: "BinaryOp",
+            value: op,
+            children: [left, right],
+            line: left.line,
+            column: left.column
+        }
+    }
+    
+    return left
+}
+
+fn parse_unary(p: Parser) -> ASTNode {
+    if peek(p).lexeme == "!" || peek(p).lexeme == "-" || peek(p).lexeme == "*" {
+        let op = peek(p).lexeme
+        advance(p)
+        let operand = parse_unary(p)
+        
+        return ASTNode {
+            type: "UnaryOp",
+            value: op,
+            children: [operand],
+            line: peek(p).line,
+            column: peek(p).column
+        }
+    }
+    
+    return parse_call(p)
+}
+
+fn parse_call(p: Parser) -> ASTNode {
+    let left = parse_primary(p)
+    
+    while peek(p).lexeme == "(" || peek(p).lexeme == "." {
+        if peek(p).lexeme == "(" {
+            advance(p)
+            let args = parse_arguments(p)
+            expect(p, ")")
+            
+            left = ASTNode {
+                type: "Call",
+                value: null,
+                children: [left, args],
+                line: left.line,
+                column: left.column
+            }
+        } else {
+            advance(p) // Skip .
+            let field = peek(p).lexeme
+            advance(p)
+            
+            left = ASTNode {
+                type: "FieldAccess",
+                value: field,
+                children: [left],
+                line: left.line,
+                column: left.column
+            }
+        }
+    }
+    
+    return left
+}
+
+fn parse_arguments(p: Parser) -> ASTNode {
+    let node = ASTNode {
+        type: "Arguments",
+        value: null,
+        children: [],
+        line: peek(p).line,
+        column: peek(p).column
+    }
+    
+    while peek(p).lexeme != ")" {
+        node.children.push(parse_expression(p))
+        
+        if peek(p).lexeme == "," {
+            advance(p)
+        }
+    }
+    
+    return node
+}
+
+fn parse_primary(p: Parser) -> ASTNode {
+    let token = peek(p)
+    let start_line = token.line
+    let start_column = token.column
+    
+    match token.type.name {
+        "IDENTIFIER" => {
+            advance(p)
+            return ASTNode {
+                type: "Identifier",
+                value: token.lexeme,
+                children: [],
+                line: start_line,
+                column: start_column
+            }
+        }
+        "NUMBER" => {
+            advance(p)
+            return ASTNode {
+                type: "NumberLiteral",
+                value: token.lexeme,
+                children: [],
+                line: start_line,
+                column: start_column
+            }
+        }
+        "STRING" => {
+            advance(p)
+            return ASTNode {
+                type: "StringLiteral",
+                value: token.lexeme,
+                children: [],
+                line: start_line,
+                column: start_column
+            }
+        }
+        "CHAR" => {
+            advance(p)
+            return ASTNode {
+                type: "CharLiteral",
+                value: token.lexeme,
+                children: [],
+                line: start_line,
+                column: start_column
+            }
+        }
+        "KEYWORD" => {
+            if token.lexeme == "true" {
+                advance(p)
+                return ASTNode {
+                    type: "BooleanLiteral",
+                    value: true,
+                    children: [],
+                    line: start_line,
+                    column: start_column
+                }
+            }
+            if token.lexeme == "false" {
+                advance(p)
+                return ASTNode {
+                    type: "BooleanLiteral",
+                    value: false,
+                    children: [],
+                    line: start_line,
+                    column: start_column
+                }
+            }
+            if token.lexeme == "null" {
+                advance(p)
+                return ASTNode {
+                    type: "NullLiteral",
+                    value: null,
+                    children: [],
+                    line: start_line,
+                    column: start_column
+                }
+            }
+        }
+        "DELIMITER" => {
+            if token.lexeme == "(" {
+                advance(p)
+                let expr = parse_expression(p)
+                expect(p, ")")
+                return expr
+            }
+            if token.lexeme == "[" {
+                advance(p)
+                let elements = []
+                while peek(p).lexeme != "]" {
+                    elements.push(parse_expression(p))
+                    if peek(p).lexeme == "," {
+                        advance(p)
+                    }
+                }
+                expect(p, "]")
+                
+                return ASTNode {
+                    type: "ArrayLiteral",
+                    value: null,
+                    children: elements,
+                    line: start_line,
+                    column: start_column
+                }
+            }
+        }
+    }
+    
+    error(p, "Expressão inesperada: " + token.lexeme)
+    advance(p)
+    return ASTNode {
+        type: "Error",
+        value: null,
+        children: [],
+        line: start_line,
+        column: start_column
+    }
+}
+
+// Type declarations
+fn parse_type_declaration(p: Parser) -> ASTNode {
+    let start_line = peek(p).line
+    let start_column = peek(p).column
+    
+    advance(p) // Skip 'type'
+    
+    let name = peek(p).lexeme
+    advance(p)
+    
+    expect(p, "=")
+    let type_def = parse_type(p)
+    
+    return ASTNode {
+        type: "TypeDeclaration",
+        value: name,
+        children: [type_def],
+        line: start_line,
+        column: start_column
+    }
+}
+
+fn parse_struct(p: Parser) -> ASTNode {
+    let start_line = peek(p).line
+    let start_column = peek(p).column
+    
+    advance(p) // Skip 'struct'
+    
+    let name = peek(p).lexeme
+    advance(p)
+    
+    expect(p, "{")
+    
+    let fields = []
+    while peek(p).lexeme != "}" {
+        let field_name = peek(p).lexeme
+        advance(p)
+        expect(p, ":")
+        let field_type = parse_type(p)
+        
+        fields.push(ASTNode {
+            type: "Field",
+            value: field_name,
+            children: [field_type],
+            line: peek(p).line,
+            column: peek(p).column
+        })
+        
+        if peek(p).lexeme == "," {
+            advance(p)
+        }
+    }
+    
+    expect(p, "}")
+    
+    return ASTNode {
+        type: "StructDeclaration",
+        value: name,
+        children: fields,
+        line: start_line,
+        column: start_column
+    }
+}
+
+fn parse_enum(p: Parser) -> ASTNode {
+    let start_line = peek(p).line
+    let start_column = peek(p).column
+    
+    advance(p) // Skip 'enum'
+    
+    let name = peek(p).lexeme
+    advance(p)
+    
+    expect(p, "{")
+    
+    let variants = []
+    while peek(p).lexeme != "}" {
+        let variant_name = peek(p).lexeme
+        advance(p)
+        
+        let variant_type = null
+        if peek(p).lexeme == "(" {
+            advance(p)
+            variant_type = parse_type(p)
+            expect(p, ")")
+        }
+        
+        variants.push(ASTNode {
+            type: "Variant",
+            value: variant_name,
+            children: [variant_type],
+            line: peek(p).line,
+            column: peek(p).column
+        })
+        
+        if peek(p).lexeme == "," {
+            advance(p)
+        }
+    }
+    
+    expect(p, "}")
+    
+    return ASTNode {
+        type: "EnumDeclaration",
+        value: name,
+        children: variants,
+        line: start_line,
+        column: start_column
+    }
+}
+
+// AST utilities
+fn ast_to_string(node: ASTNode, indent: int) -> string {
+    let result = "  " * indent + node.type
+    if node.value != null {
+        result = result + ": " + node.value.to_string()
+    }
+    result = result + "\n"
+    
+    for child in node.children {
+        if child != null {
+            result = result + ast_to_string(child, indent + 1)
+        }
+    }
+    
+    return result
+}
+
+fn find_node(ast: ASTNode, node_type: string) -> [ASTNode] {
+    let results = []
+    
+    if ast.type == node_type {
+        results.push(ast)
+    }
+    
+    for child in ast.children {
+        if child != null {
+            results = results + find_node(child, node_type)
+        }
+    }
+    
+    return results
+}

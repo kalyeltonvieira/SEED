@@ -1,0 +1,178 @@
+module stdlib.cli
+
+type ArgSpec = {
+    name: string
+    short: string
+    long: string
+    help: string
+    required: bool
+    default: string
+}
+
+type ParsedArgs = {
+    positional: [string]
+    flags: dict
+    options: dict
+}
+
+/// Parseia argumentos
+fn parse_args(spec: dict) -> ParsedArgs {
+    let args = os.args()
+    let positional = []
+    let flags = dict()
+    let options = dict()
+    
+    let i = 1
+    while i < args.len {
+        let arg = args[i]
+        if arg.starts_with("--") {
+            let key = arg.substring(2, arg.len)
+            if i + 1 < args.len && !args[i + 1].starts_with("-") {
+                options[key] = args[i + 1]
+                i = i + 2
+            } else {
+                flags[key] = true
+                i = i + 1
+            }
+        } else if arg.starts_with("-") {
+            let key = arg.substring(1, arg.len)
+            if i + 1 < args.len && !args[i + 1].starts_with("-") {
+                options[key] = args[i + 1]
+                i = i + 2
+            } else {
+                flags[key] = true
+                i = i + 1
+            }
+        } else {
+            positional.push(arg)
+            i = i + 1
+        }
+    }
+    
+    return ParsedArgs(positional, flags, options)
+}
+
+/// Pergunta ao usuário
+fn prompt(msg: string) -> string {
+    io.print(msg)
+    return io.read_line()
+}
+
+/// Sim/Não
+fn confirm(msg: string) -> bool {
+    let answer = prompt(msg + " [y/N]: ")
+    return answer == "y" || answer == "Y" || answer == "s" || answer == "S"
+}
+
+/// Seleciona opção
+fn select(msg: string, options: [string]) -> int {
+    println(msg)
+    for i in 0..options.len {
+        println("  " + (i + 1).to_string() + ". " + options[i])
+    }
+    let choice = prompt("Escolha: ").to_int()
+    return choice - 1
+}
+
+type ProgressBar = {
+    total: int
+    current: int
+    width: int
+}
+
+/// Barra de progresso
+fn progress_bar(total: int) -> ProgressBar {
+    return ProgressBar(total, 0, 50)
+}
+
+fn update(pb: ProgressBar, current: int) {
+    pb.current = current
+    let percent = (current * 100) / pb.total
+    let filled = (pb.width * percent) / 100
+    let bar = ""
+    for i in 0..pb.width {
+        if i < filled {
+            bar = bar + "="
+        } else {
+            bar = bar + " "
+        }
+    }
+    print("\r[" + bar + "] " + percent.to_string() + "%")
+    if current == pb.total {
+        println("")
+    }
+}
+
+type Spinner = {
+    frames: [string]
+    current: int
+    message: string
+}
+
+/// Spinner animado
+fn spinner(msg: string) -> Spinner {
+    return Spinner(["|", "/", "-", "\\"], 0, msg)
+}
+
+fn update(sp: Spinner) {
+    let frame = sp.frames[sp.current]
+    print("\r" + frame + " " + sp.message)
+    sp.current = (sp.current + 1) % sp.frames.len
+}
+
+fn stop(sp: Spinner) {
+    print("\r" + " " * (sp.message.len() + 2) + "\r")
+}
+
+/// Tabela formatada
+fn table(headers: [string], rows: [[string]]) {
+    let col_widths = []
+    for h in headers {
+        col_widths.push(h.len())
+    }
+    for row in rows {
+        for i in 0..row.len {
+            if row[i].len() > col_widths[i] {
+                col_widths[i] = row[i].len()
+            }
+        }
+    }
+    
+    let separator = "+"
+    for w in col_widths {
+        separator = separator + "-" + "-" * w + "-+"
+    }
+    println(separator)
+    
+    let header_line = "|"
+    for i in 0..headers.len {
+        header_line = header_line + " " + headers[i] + " " * (col_widths[i] - headers[i].len()) + " |"
+    }
+    println(header_line)
+    println(separator)
+    
+    for row in rows {
+        let line = "|"
+        for i in 0..row.len {
+            line = line + " " + row[i] + " " * (col_widths[i] - row[i].len()) + " |"
+        }
+        println(line)
+    }
+    println(separator)
+}
+
+/// Texto colorido
+fn color(text: string, color: string) -> string {
+    let codes = {
+        "red": "31",
+        "green": "32",
+        "yellow": "33",
+        "blue": "34",
+        "magenta": "35",
+        "cyan": "36",
+        "white": "37",
+        "reset": "0"
+    }
+    let code = codes.get(color, "0")
+    return "\033[" + code + "m" + text + "\033[0m"
+}

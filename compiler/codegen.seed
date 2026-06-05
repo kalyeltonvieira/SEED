@@ -1,0 +1,559 @@
+module compiler.codegen
+
+import compiler.parser
+
+/// Gerador de Código para SEED
+/// Transforma AST tipada em bytecode com otimizações
+
+type Instruction = {
+    opcode: int
+    operand: int
+    line: int
+}
+
+type CodeGen = {
+    instructions: [Instruction]
+    constants: [any]
+    labels: dict
+    current_label: string
+    optimizations: bool
+}
+
+// Opcodes da VM SEED (7 instruções primitivas)
+const OP_PUSH = 0
+const OP_POP = 1
+const OP_LOAD = 2
+const OP_STORE = 3
+const OP_CALL = 4
+const OP_JUMP = 5
+const OP_RETURN = 6
+
+fn codegen(optimizations: bool) -> CodeGen {
+    return CodeGen {
+        instructions: [],
+        constants: [],
+        labels: dict(),
+        current_label: "",
+        optimizations: optimizations
+    }
+}
+
+fn generate(cg: CodeGen, ast: ASTNode) -> [Instruction] {
+    emit_module(cg, ast)
+    
+    if cg.optimizations {
+        optimize(cg)
+    }
+    
+    return cg.instructions
+}
+
+fn emit(cg: CodeGen, opcode: int, operand: int, line: int) {
+    cg.instructions.push(Instruction {
+        opcode: opcode,
+        operand: operand,
+        line: line
+    })
+}
+
+fn emit_module(cg: CodeGen, node: ASTNode) {
+    match node.type {
+        "Module" => {
+            for child in node.children {
+                emit_module(cg, child)
+            }
+        }
+        "ModuleDeclaration" => {
+            // Module declaration - no code needed
+        }
+        "Import" => {
+            // Import - load module
+            let module_name = node.value
+            emit(cg, OP_LOAD, add_constant(cg, module_name), node.line)
+        }
+        "Function" => {
+            emit_function(cg, node)
+        }
+        "LetDeclaration" | "ConstDeclaration" => {
+            emit_declaration(cg, node)
+        }
+        _ => {
+            // Other top-level declarations
+        }
+    }
+}
+
+fn emit_function(cg: CodeGen, node: ASTNode) {
+    let name = node.value
+    let params = node.children[0]
+    let body = node.children[2]
+    
+    // Create label for function
+    let label = "fn_" + name
+    cg.labels[label] = cg.instructions.len
+    
+    // Emit function prologue
+    emit(cg, OP_PUSH, 0, node.line) // Reserve stack space
+    
+    // Emit body
+    emit_block(cg, body)
+    
+    // Emit return
+    emit(cg, OP_RETURN, 0, node.line)
+}
+
+fn emit_declaration(cg: CodeGen, node: ASTNode) {
+    let name = node.value
+    let init = node.children[1]
+    
+    if init != null {
+        emit_expression(cg, init)
+        emit(cg, OP_STORE, add_constant(cg, name), node.line)
+    }
+}
+
+fn emit_block(cg: CodeGen, node: ASTNode) {
+    for stmt in node.children {
+        emit_statement(cg, stmt)
+    }
+}
+
+fn emit_statement(cg: CodeGen, node: ASTNode) {
+    match node.type {
+        "LetDeclaration" | "ConstDeclaration" => {
+            emit_declaration(cg, node)
+        }
+        "If" => {
+            emit_if(cg, node)
+        }
+        "For" => {
+            emit_for(cg, node)
+        }
+        "While" => {
+            emit_while(cg, node)
+        }
+        "Return" => {
+            let value = node.children[0]
+            if value != null {
+                emit_expression(cg, value)
+            }
+            emit(cg, OP_RETURN, 0, node.line)
+        }
+        "Match" => {
+            emit_match(cg, node)
+        }
+        "Block" => {
+            emit_block(cg, node)
+        }
+        _ => {
+            // Expression statement
+            emit_expression(cg, node)
+            emit(cg, OP_POP, 0, node.line) // Discard result
+        }
+    }
+}
+
+fn emit_if(cg: CodeGen, node: ASTNode) {
+    let condition = node.children[0]
+    let then_branch = node.children[1]
+    let else_branch = node.children[2]
+    
+    let else_label = "else_" + crypto.uuid().substring(0, 8)
+    let end_label = "end_" + crypto.uuid().substring(0, 8)
+    
+    // Emit condition
+    emit_expression(cg, condition)
+    
+    // Jump to else if false
+    emit(cg, OP_JUMP, 0, node.line) // Placeholder
+    let jump_pos = cg.instructions.len - 1
+    
+    // Emit then branch
+    emit_block(cg, then_branch)
+    
+    // Jump to end
+    emit(cg, OP_JUMP, 0, node.line)
+    let end_jump_pos = cg.instructions.len - 1
+    
+    // Fix else label
+    cg.labels[else_label] = cg.instructions.len
+    
+    // Emit else branch
+    if else_branch != null {
+        emit_block(cg, else_branch)
+    }
+    
+    // Fix end label
+    cg.labels[end_label] = cg.instructions.len
+    
+    // Fix jumps
+    cg.instructions[jump_pos].operand = cg.labels[else_label]
+    cg.instructions[end_jump_pos].operand = cg.labels[end_label]
+}
+
+fn emit_for(cg: CodeGen, node: ASTNode) {
+    let pattern = node.children[0]
+    let iterable = node.children[1]
+    let body = node.children[2]
+    
+    let loop_label = "loop_" + crypto.uuid().substring(0, 8)
+    let end_label = "end_" + crypto.uuid().substring(0, 8)
+    
+    // Emit iterable
+    emit_expression(cg, iterable)
+    emit(cg, OP_STORE, add_constant(cg, "iterator"), node.line)
+    
+    // Loop label
+    cg.labels[loop_label] = cg.instructions.len
+    
+    // Check if iterator has next
+    emit(cg, OP_LOAD, add_constant(cg, "iterator"), node.line)
+    emit(cg, OP_CALL, add_constant(cg, "has_next"), node.line)
+    emit(cg, OP_JUMP, 0, node.line) // Placeholder
+    let jump_pos = cg.instructions.len - 1
+    
+    // Get next element
+    emit(cg, OP_LOAD, add_constant(cg, "iterator"), node.line)
+    emit(cg, OP_CALL, add_constant(cg, "next"), node.line)
+    
+    // Store in pattern variable
+    emit(cg, OP_STORE, add_constant(cg, pattern.value), node.line)
+    
+    // Emit body
+    emit_block(cg, body)
+    
+    // Jump back to loop
+    emit(cg, OP_JUMP, cg.labels[loop_label], node.line)
+    
+    // End label
+    cg.labels[end_label] = cg.instructions.len
+    
+    // Fix jump
+    cg.instructions[jump_pos].operand = cg.labels[end_label]
+}
+
+fn emit_while(cg: CodeGen, node: ASTNode) {
+    let condition = node.children[0]
+    let body = node.children[1]
+    
+    let loop_label = "loop_" + crypto.uuid().substring(0, 8)
+    let end_label = "end_" + crypto.uuid().substring(0, 8)
+    
+    // Loop label
+    cg.labels[loop_label] = cg.instructions.len
+    
+    // Emit condition
+    emit_expression(cg, condition)
+    
+    // Jump to end if false
+    emit(cg, OP_JUMP, 0, node.line) // Placeholder
+    let jump_pos = cg.instructions.len - 1
+    
+    // Emit body
+    emit_block(cg, body)
+    
+    // Jump back to loop
+    emit(cg, OP_JUMP, cg.labels[loop_label], node.line)
+    
+    // End label
+    cg.labels[end_label] = cg.instructions.len
+    
+    // Fix jump
+    cg.instructions[jump_pos].operand = cg.labels[end_label]
+}
+
+fn emit_match(cg: CodeGen, node: ASTNode) {
+    let value = node.children[0]
+    let arms = node.children.slice(1, node.children.len)
+    
+    // Emit value
+    emit_expression(cg, value)
+    emit(cg, OP_STORE, add_constant(cg, "match_value"), node.line)
+    
+    let end_label = "end_match_" + crypto.uuid().substring(0, 8)
+    
+    for i in 0..arms.len {
+        let arm = arms[i]
+        let pattern = arm.children[0]
+        let body = arm.children[1]
+        
+        let next_label = if i < arms.len - 1 {
+            "next_" + crypto.uuid().substring(0, 8)
+        } else {
+            end_label
+        }
+        
+        // Check pattern
+        emit(cg, OP_LOAD, add_constant(cg, "match_value"), node.line)
+        emit(cg, OP_PUSH, add_constant(cg, pattern.value), node.line)
+        emit(cg, OP_CALL, add_constant(cg, "pattern_match"), node.line)
+        emit(cg, OP_JUMP, 0, node.line) // Placeholder
+        let jump_pos = cg.instructions.len - 1
+        
+        // Emit body
+        emit_expression(cg, body)
+        emit(cg, OP_JUMP, cg.labels[end_label], node.line)
+        
+        // Fix next label
+        cg.labels[next_label] = cg.instructions.len
+        cg.instructions[jump_pos].operand = cg.labels[next_label]
+    }
+    
+    cg.labels[end_label] = cg.instructions.len
+}
+
+fn emit_expression(cg: CodeGen, node: ASTNode) {
+    match node.type {
+        "BinaryOp" => {
+            emit_binary_op(cg, node)
+        }
+        "UnaryOp" => {
+            emit_unary_op(cg, node)
+        }
+        "Call" => {
+            emit_call(cg, node)
+        }
+        "FieldAccess" => {
+            emit_field_access(cg, node)
+        }
+        "Identifier" => {
+            emit(cg, OP_LOAD, add_constant(cg, node.value), node.line)
+        }
+        "NumberLiteral" => {
+            let value = node.value.to_float()
+            emit(cg, OP_PUSH, add_constant(cg, value), node.line)
+        }
+        "StringLiteral" => {
+            let value = node.value
+            emit(cg, OP_PUSH, add_constant(cg, value), node.line)
+        }
+        "CharLiteral" => {
+            let value = node.value.to_int()
+            emit(cg, OP_PUSH, add_constant(cg, value), node.line)
+        }
+        "BooleanLiteral" => {
+            let value = if node.value { 1 } else { 0 }
+            emit(cg, OP_PUSH, add_constant(cg, value), node.line)
+        }
+        "NullLiteral" => {
+            emit(cg, OP_PUSH, add_constant(cg, null), node.line)
+        }
+        "ArrayLiteral" => {
+            emit_array_literal(cg, node)
+        }
+        _ => {
+            // Default
+        }
+    }
+}
+
+fn emit_binary_op(cg: CodeGen, node: ASTNode) {
+    let left = node.children[0]
+    let right = node.children[1]
+    let op = node.value
+    
+    emit_expression(cg, left)
+    emit_expression(cg, right)
+    
+    let op_code = match op {
+        "+" => add_constant(cg, "add")
+        "-" => add_constant(cg, "sub")
+        "*" => add_constant(cg, "mul")
+        "/" => add_constant(cg, "div")
+        "%" => add_constant(cg, "mod")
+        "==" => add_constant(cg, "eq")
+        "!=" => add_constant(cg, "neq")
+        "<" => add_constant(cg, "lt")
+        ">" => add_constant(cg, "gt")
+        "<=" => add_constant(cg, "lte")
+        ">=" => add_constant(cg, "gte")
+        "&&" => add_constant(cg, "and")
+        "||" => add_constant(cg, "or")
+        _ => add_constant(cg, op)
+    }
+    
+    emit(cg, OP_CALL, op_code, node.line)
+}
+
+fn emit_unary_op(cg: CodeGen, node: ASTNode) {
+    let operand = node.children[0]
+    let op = node.value
+    
+    emit_expression(cg, operand)
+    
+    let op_code = match op {
+        "!" => add_constant(cg, "not")
+        "-" => add_constant(cg, "neg")
+        "*" => add_constant(cg, "deref")
+        _ => add_constant(cg, op)
+    }
+    
+    emit(cg, OP_CALL, op_code, node.line)
+}
+
+fn emit_call(cg: CodeGen, node: ASTNode) {
+    let callee = node.children[0]
+    let args = node.children[1]
+    
+    // Emit arguments in reverse order (stack grows upward)
+    for i in args.children.len..0 {
+        emit_expression(cg, args.children[i - 1])
+    }
+    
+    // Emit function call
+    emit_expression(cg, callee)
+    emit(cg, OP_CALL, args.children.len, node.line)
+}
+
+fn emit_field_access(cg: CodeGen, node: ASTNode) {
+    let object = node.children[0]
+    let field = node.value
+    
+    emit_expression(cg, object)
+    emit(cg, OP_PUSH, add_constant(cg, field), node.line)
+    emit(cg, OP_CALL, add_constant(cg, "get_field"), node.line)
+}
+
+fn emit_array_literal(cg: CodeGen, node: ASTNode) {
+    for elem in node.children {
+        emit_expression(cg, elem)
+    }
+    emit(cg, OP_PUSH, add_constant(cg, node.children.len), node.line)
+    emit(cg, OP_CALL, add_constant(cg, "make_array"), node.line)
+}
+
+fn add_constant(cg: CodeGen, value: any) -> int {
+    // Check if constant already exists
+    for i in 0..cg.constants.len {
+        if cg.constants[i] == value {
+            return i
+        }
+    }
+    
+    cg.constants.push(value)
+    return cg.constants.len - 1
+}
+
+// Otimizações
+fn optimize(cg: CodeGen) {
+    constant_folding(cg)
+    dead_code_elimination(cg)
+    inline_functions(cg)
+}
+
+fn constant_folding(cg: CodeGen) {
+    let i = 0
+    while i < cg.instructions.len {
+        let instr = cg.instructions[i]
+        
+        // Pattern: PUSH const, PUSH const, CALL add -> PUSH result
+        if instr.opcode == OP_PUSH && i + 2 < cg.instructions.len {
+            let next = cg.instructions[i + 1]
+            let next2 = cg.instructions[i + 2]
+            
+            if next.opcode == OP_PUSH && next2.opcode == OP_CALL {
+                let op = cg.constants[next2.operand]
+                if op == "add" || op == "sub" || op == "mul" {
+                    let left = cg.constants[instr.operand]
+                    let right = cg.constants[next.operand]
+                    
+                    let result = match op {
+                        "add" => left + right
+                        "sub" => left - right
+                        "mul" => left * right
+                        _ => left
+                    }
+                    
+                    // Replace with single push
+                    cg.instructions[i] = Instruction {
+                        opcode: OP_PUSH,
+                        operand: add_constant(cg, result),
+                        line: instr.line
+                    }
+                    
+                    // Remove next instructions
+                    cg.instructions.remove(i + 1)
+                    cg.instructions.remove(i + 1)
+                    
+                    continue
+                }
+            }
+        }
+        
+        i = i + 1
+    }
+}
+
+fn dead_code_elimination(cg: CodeGen) {
+    let i = 0
+    while i < cg.instructions.len {
+        let instr = cg.instructions[i]
+        
+        // Remove code after unconditional jump
+        if instr.opcode == OP_JUMP && instr.operand > i {
+            // Remove instructions between jump and target
+            for j in (i + 1)..instr.operand {
+                cg.instructions.remove(j)
+            }
+        }
+        
+        i = i + 1
+    }
+}
+
+fn inline_functions(cg: CodeGen) {
+    // Simple inlining for small functions
+    // In real implementation, analyze function size and call frequency
+}
+
+// Bytecode serialization
+fn serialize_bytecode(cg: CodeGen) -> [int] {
+    let bytecode = []
+    
+    for instr in cg.instructions {
+        bytecode.push(instr.opcode)
+        bytecode.push(instr.operand)
+    }
+    
+    return bytecode
+}
+
+fn serialize_constants(cg: CodeGen) -> [any] {
+    return cg.constants
+}
+
+fn to_hex(bytecode: [int]) -> string {
+    let hex = ""
+    for byte in bytecode {
+        hex = hex + byte.to_hex()
+    }
+    return hex
+}
+
+fn disassemble(cg: CodeGen) -> string {
+    let result = ""
+    
+    for i in 0..cg.instructions.len {
+        let instr = cg.instructions[i]
+        let op_name = match instr.opcode {
+            OP_PUSH => "PUSH"
+            OP_POP => "POP"
+            OP_LOAD => "LOAD"
+            OP_STORE => "STORE"
+            OP_CALL => "CALL"
+            OP_JUMP => "JUMP"
+            OP_RETURN => "RETURN"
+            _ => "UNKNOWN"
+        }
+        
+        result = result + i.to_string() + ": " + op_name + " " + instr.operand.to_string()
+        
+        if instr.operand < cg.constants.len {
+            result = result + " ; " + cg.constants[instr.operand].to_string()
+        }
+        
+        result = result + "\n"
+    }
+    
+    return result
+}

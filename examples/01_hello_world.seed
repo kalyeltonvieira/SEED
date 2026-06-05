@@ -1,0 +1,9 @@
+module hello_world
+
+import stdlib.io
+
+/// O clássico Hello World em SEED
+fn main() {
+    println("Hello, World!")
+    println("Bem-vindo à linguagem SEED!")
+}

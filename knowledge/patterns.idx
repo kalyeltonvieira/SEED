@@ -1,0 +1,27 @@
+bubble_sort:
+  detect = nested for + adjacent swap
+  response = producao rejeitada, compilacao permitida com #[keep]. Oferecer timsort/quicksort.
+
+naive_fibonacci:
+  detect = fib(n-1) + fib(n-2)
+  response = ALERTA O(2^n). Oferecer iterativo, matriz, Binet, lookup.
+
+select_star:
+  detect = SELECT *
+  response = codigo envelhece. Sugerir colunas, paginacao, cache.
+
+small_hash_map:
+  detect = hash_map with estimated_items <= 8
+  response = negociar array linear.
+
+implicit_string_int:
+  detect = string + int
+  response = converter int com to_string e emitir SEED004.
+
+effect_growth:
+  detect = rewrite adds net/fs.write/unsafe/syscall
+  response = bloquear autonomia e exigir revisao humana.
+
+genitor:
+  detect = genitor Name { entrada saida propriedade fitness }
+  response = gerar populacao, testar propriedades, selecionar sobreviventes.

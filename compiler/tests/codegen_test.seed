@@ -1,0 +1,222 @@
+module compiler.tests.codegen_test
+
+/// Testes do Codegen SEED
+/// Verifica se o codegen gera bytecode corretamente
+
+use compiler.lexer
+use compiler.parser
+use compiler.typechecker
+use compiler.codegen
+
+fn main() {
+    println("=== Testes do Codegen SEED ===")
+    println("")
+    
+    test_constant_generation()
+    test_variable_allocation()
+    test_function_call()
+    test_binary_operations()
+    test_control_flow()
+    test_stack_management()
+    
+    println("")
+    println("Todos os testes do codegen passaram!")
+}
+
+fn test_constant_generation() {
+    println("Testando geração de constantes...")
+    
+    let source = "fn main() { let x = 42 }"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    let typed_result = typechecker.typecheck(ast_result.value)
+    if typed_result.is_error {
+        println("  [FALHOU] Erro de tipo: " + typed_result.error)
+        exit(1)
+    }
+    
+    let codegen_result = codegen.codegen(typed_result.value)
+    if codegen_result.is_error {
+        println("  [FALHOU] Erro de geração de código: " + codegen_result.error)
+        exit(1)
+    }
+    
+    let bytecode = codegen_result.value
+    if bytecode.instructions.len == 0 {
+        println("  [FALHOU] Nenhuma instrução gerada")
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_variable_allocation() {
+    println("Testando alocação de variáveis...")
+    
+    let source = "fn main() { let x = 42; let y = 100 }"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    let typed_result = typechecker.typecheck(ast_result.value)
+    if typed_result.is_error {
+        println("  [FALHOU] Erro de tipo: " + typed_result.error)
+        exit(1)
+    }
+    
+    let codegen_result = codegen.codegen(typed_result.value)
+    if codegen_result.is_error {
+        println("  [FALHOU] Erro de geração de código: " + codegen_result.error)
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_function_call() {
+    println("Testando chamada de função...")
+    
+    let source = "fn main() { println(\"hello\") }"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    let typed_result = typechecker.typecheck(ast_result.value)
+    if typed_result.is_error {
+        println("  [FALHOU] Erro de tipo: " + typed_result.error)
+        exit(1)
+    }
+    
+    let codegen_result = codegen.codegen(typed_result.value)
+    if codegen_result.is_error {
+        println("  [FALHOU] Erro de geração de código: " + codegen_result.error)
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_binary_operations() {
+    println("Testando operações binárias...")
+    
+    let source = "fn main() { let x = 1 + 2 * 3 }"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    let typed_result = typechecker.typecheck(ast_result.value)
+    if typed_result.is_error {
+        println("  [FALHOU] Erro de tipo: " + typed_result.error)
+        exit(1)
+    }
+    
+    let codegen_result = codegen.codegen(typed_result.value)
+    if codegen_result.is_error {
+        println("  [FALHOU] Erro de geração de código: " + codegen_result.error)
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_control_flow() {
+    println("Testando fluxo de controle...")
+    
+    let source = "fn main() { if x > 0 { println(\"positive\") } }"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    let typed_result = typechecker.typecheck(ast_result.value)
+    if typed_result.is_error {
+        println("  [FALHOU] Erro de tipo: " + typed_result.error)
+        exit(1)
+    }
+    
+    let codegen_result = codegen.codegen(typed_result.value)
+    if codegen_result.is_error {
+        println("  [FALHOU] Erro de geração de código: " + codegen_result.error)
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_stack_management() {
+    println("Testando gerenciamento de stack...")
+    
+    let source = "fn main() { let x = 1; let y = 2; let z = x + y }"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    let typed_result = typechecker.typecheck(ast_result.value)
+    if typed_result.is_error {
+        println("  [FALHOU] Erro de tipo: " + typed_result.error)
+        exit(1)
+    }
+    
+    let codegen_result = codegen.codegen(typed_result.value)
+    if codegen_result.is_error {
+        println("  [FALHOU] Erro de geração de código: " + codegen_result.error)
+        exit(1)
+    }
+    
+    println("  [OK]")
+}

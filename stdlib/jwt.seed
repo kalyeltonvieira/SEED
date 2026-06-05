@@ -1,0 +1,46 @@
+module stdlib.jwt
+
+/// JSON Web Token module
+
+pub type Header = {
+    alg: string,
+    typ: string
+}
+
+pub type Payload = {
+    iss: string,
+    sub: string,
+    aud: string,
+    exp: int,
+    nbf: int,
+    iat: int,
+    jti: string
+}
+
+pub type Token = {
+    header: Header,
+    payload: Payload,
+    signature: string
+}
+
+pub fn encode(header: Header, payload: Payload, secret: string) -> string {
+    return syscall.jwt_encode(header, payload, secret)
+}
+
+pub fn decode(token: string) -> Token {
+    return syscall.jwt_decode(token)
+}
+
+pub fn verify(token: string, secret: string) -> bool {
+    return syscall.jwt_verify(token, secret)
+}
+
+pub fn sign(payload: Payload, secret: string) -> string {
+    let header = Header { alg: "HS256", typ: "JWT" }
+    return encode(header, payload, secret)
+}
+
+pub fn is_expired(token: Token) -> bool {
+    let now = datetime.now().to_timestamp()
+    return token.payload.exp < now
+}

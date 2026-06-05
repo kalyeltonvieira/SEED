@@ -1,0 +1,92 @@
+module stdlib.validator
+
+/// Input validation utility module
+
+pub fn is_email(s: string) -> bool {
+    if s.len < 3 { return false }
+    if !s.contains("@") { return false }
+    
+    let parts = s.split("@")
+    if parts.len != 2 { return false }
+    
+    let user = parts[0]
+    let domain = parts[1]
+    
+    if user.len == 0 || domain.len == 0 { return false }
+    if !domain.contains(".") { return false }
+    
+    let domain_parts = domain.split(".")
+    for part in domain_parts {
+        if part.len == 0 { return false }
+    }
+    
+    return true
+}
+
+pub fn is_ip_v4(s: string) -> bool {
+    let parts = s.split(".")
+    if parts.len != 4 { return false }
+    
+    for part in parts {
+        if part.len == 0 || part.len > 3 { return false }
+        
+        for i in 0..part.len {
+            let c = part[i]
+            if c < "0" || c > "9" { return false }
+        }
+        
+        let val = part.to_int()
+        if val < 0 || val > 255 { return false }
+        
+        if part.len > 1 && part.starts_with("0") { return false }
+    }
+    
+    return true
+}
+
+pub fn is_numeric(s: string) -> bool {
+    if s.len == 0 { return false }
+    for i in 0..s.len {
+        let c = s[i]
+        if c < "0" || c > "9" { return false }
+    }
+    return true
+}
+
+pub fn is_alphanumeric(s: string) -> bool {
+    if s.len == 0 { return false }
+    for i in 0..s.len {
+        let c = s[i]
+        let is_digit = c >= "0" && c <= "9"
+        let is_lower = c >= "a" && c <= "z"
+        let is_upper = c >= "A" && c <= "Z"
+        if !is_digit && !is_lower && !is_upper { return false }
+    }
+    return true
+}
+
+pub fn is_uuid(s: string) -> bool {
+    if s.len != 36 { return false }
+    
+    for i in 0..36 {
+        let c = s[i]
+        if i == 8 || i == 13 || i == 18 || i == 23 {
+            if c != "-" { return false }
+        } else {
+            let is_digit = c >= "0" && c <= "9"
+            let is_hex_lower = c >= "a" && c <= "f"
+            let is_hex_upper = c >= "A" && c <= "F"
+            if !is_digit && !is_hex_lower && !is_hex_upper { return false }
+        }
+    }
+    
+    return true
+}
+
+pub fn is_url(s: string) -> bool {
+    let lowered = s.to_lower()
+    if !lowered.starts_with("http://") && !lowered.starts_with("https://") && !lowered.starts_with("ftp://") {
+        return false
+    }
+    return s.len > 8
+}

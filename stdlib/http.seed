@@ -1,0 +1,415 @@
+module stdlib.http
+
+/// HTTP utilities (cookies, sessions, multipart, etc.)
+
+type Cookie = {
+    name: string
+    value: string
+    domain: string
+    path: string
+    expires: string
+    secure: bool
+    http_only: bool
+}
+
+type Session = {
+    id: string
+    data: dict
+    created_at: time.Timestamp
+    expires_at: time.Timestamp
+}
+
+type MultipartPart = {
+    name: string
+    filename: string
+    content_type: string
+    data: string
+}
+
+type FormData = {
+    fields: dict
+    files: [MultipartPart]
+}
+
+// Cookie handling
+fn parse_cookie_header(header: string) -> [Cookie] {
+    let cookies = []
+    let parts = header.split(";")
+    
+    for part in parts {
+        let trimmed = part.trim()
+        let kv = trimmed.split("=")
+        
+        if kv.len == 2 {
+            cookies.push(Cookie {
+                name: kv[0].trim(),
+                value: kv[1].trim(),
+                domain: "",
+                path: "/",
+                expires: "",
+                secure: false,
+                http_only: false
+            })
+        }
+    }
+    
+    return cookies
+}
+
+fn format_cookie(cookie: Cookie) -> string {
+    let result = cookie.name + "=" + cookie.value
+    
+    if cookie.domain.len > 0 {
+        result = result + "; Domain=" + cookie.domain
+    }
+    
+    if cookie.path.len > 0 {
+        result = result + "; Path=" + cookie.path
+    }
+    
+    if cookie.expires.len > 0 {
+        result = result + "; Expires=" + cookie.expires
+    }
+    
+    if cookie.secure {
+        result = result + "; Secure"
+    }
+    
+    if cookie.http_only {
+        result = result + "; HttpOnly"
+    }
+    
+    return result
+}
+
+fn cookie_jar() -> dict {
+    return dict()
+}
+
+fn set_cookie(jar: dict, cookie: Cookie) {
+    jar[cookie.name] = cookie
+}
+
+fn get_cookie(jar: dict, name: string) -> Option[Cookie] {
+    if jar.contains(name) {
+        return Option[Cookie].Some(jar[name])
+    }
+    return Option[Cookie].None
+}
+
+fn delete_cookie(jar: dict, name: string) {
+    jar.remove(name)
+}
+
+// Session handling
+fn create_session(data: dict, ttl: int) -> Session {
+    let now = time.now()
+    let expires = time.add(now, time.Duration {
+        seconds: ttl,
+        nanos: 0
+    })
+    
+    return Session {
+        id: crypto.uuid(),
+        data: data,
+        created_at: now,
+        expires_at: expires
+    }
+}
+
+fn session_expired(session: Session) -> bool {
+    let now = time.now()
+    return time.to_millis(time.elapsed(session.expires_at)) > 0
+}
+
+fn session_store() -> dict {
+    return dict()
+}
+
+fn save_session(store: dict, session: Session) {
+    store[session.id] = session
+}
+
+fn load_session(store: dict, id: string) -> Option[Session] {
+    if store.contains(id) {
+        let session = store[id]
+        if !session_expired(session) {
+            return Option[Session].Some(session)
+        }
+        store.remove(id)
+    }
+    return Option[Session].None
+}
+
+fn delete_session(store: dict, id: string) {
+    store.remove(id)
+}
+
+// Multipart form data
+fn parse_multipart(body: string, boundary: string) -> FormData {
+    let form = FormData {
+        fields: dict(),
+        files: []
+    }
+    
+    let parts = body.split("--" + boundary)
+    
+    for part in parts {
+        if part.contains("Content-Disposition") {
+            let lines = part.split("\n")
+            let disposition = lines[0]
+            
+            if disposition.contains("filename=") {
+                // File part
+                let filename = disposition.split("filename=")[1].trim().replace("\"", "")
+                let content_type = ""
+                let data_start = 2
+                
+                for i in 1..lines.len {
+                    if lines[i].starts_with("Content-Type:") {
+                        content_type = lines[i].split(":")[1].trim()
+                    } else if lines[i].is_empty() {
+                        break
+                    }
+                    data_start = i + 1
+                }
+                
+                let file_data = lines.slice(data_start, lines.len).join("\n")
+                
+                form.files.push(MultipartPart {
+                    name: "",
+                    filename: filename,
+                    content_type: content_type,
+                    data: file_data
+                })
+            } else {
+                // Field part
+                let name = disposition.split("name=")[1].trim().replace("\"", "")
+                let data_start = 1
+                
+                for i in 1..lines.len {
+                    if lines[i].is_empty() {
+                        break
+                    }
+                    data_start = i + 1
+                }
+                
+                let field_data = lines.slice(data_start, lines.len).join("\n")
+                form.fields[name] = field_data
+            }
+        }
+    }
+    
+    return form
+}
+
+fn build_multipart(form: FormData, boundary: string) -> string {
+    let body = ""
+    
+    for (name, value) in form.fields {
+        body = body + "--" + boundary + "\n"
+        body = body + "Content-Disposition: form-data; name=\"" + name + "\"\n"
+        body = body + "\n"
+        body = body + value + "\n"
+    }
+    
+    for file in form.files {
+        body = body + "--" + boundary + "\n"
+        body = body + "Content-Disposition: form-data; name=\"" + file.name + "\"; filename=\"" + file.filename + "\"\n"
+        body = body + "Content-Type: " + file.content_type + "\n"
+        body = body + "\n"
+        body = body + file.data + "\n"
+    }
+    
+    body = body + "--" + boundary + "--\n"
+    
+    return body
+}
+
+// URL utilities
+fn url_encode(s: string) -> string {
+    return encoding.url_encode(s)
+}
+
+fn url_decode(s: string) -> string {
+    return encoding.url_decode(s)
+}
+
+fn parse_query_string(query: string) -> dict {
+    let params = dict()
+    let pairs = query.split("&")
+    
+    for pair in pairs {
+        let kv = pair.split("=")
+        if kv.len == 2 {
+            params[url_decode(kv[0])] = url_decode(kv[1])
+        }
+    }
+    
+    return params
+}
+
+fn build_query_string(params: dict) -> string {
+    let pairs = []
+    
+    for (key, value) in params {
+        pairs.push(url_encode(key) + "=" + url_encode(value))
+    }
+    
+    return pairs.join("&")
+}
+
+fn parse_url(url: string) -> dict {
+    let result = dict()
+    
+    // Simple URL parsing
+    let protocol_end = url.index_of("://")
+    if protocol_end >= 0 {
+        result["protocol"] = url.substring(0, protocol_end)
+        let rest = url.substring(protocol_end + 3, url.len())
+        
+        let path_start = rest.index_of("/")
+        let query_start = rest.index_of("?")
+        let fragment_start = rest.index_of("#")
+        
+        let host_end = path_start
+        if query_start >= 0 && (host_end < 0 || query_start < host_end) {
+            host_end = query_start
+        }
+        if fragment_start >= 0 && (host_end < 0 || fragment_start < host_end) {
+            host_end = fragment_start
+        }
+        
+        if host_end >= 0 {
+            result["host"] = rest.substring(0, host_end)
+        } else {
+            result["host"] = rest
+        }
+        
+        if path_start >= 0 {
+            let path_end = query_start
+            if fragment_start >= 0 && (path_end < 0 || fragment_start < path_end) {
+                path_end = fragment_start
+            }
+            
+            if path_end >= 0 {
+                result["path"] = rest.substring(path_start, path_end)
+            } else {
+                result["path"] = rest.substring(path_start, rest.len())
+            }
+        }
+        
+        if query_start >= 0 {
+            let query_end = fragment_start
+            if fragment_start >= 0 {
+                query_end = fragment_start
+            }
+            
+            if query_end >= 0 {
+                result["query"] = rest.substring(query_start + 1, query_end)
+            } else {
+                result["query"] = rest.substring(query_start + 1, rest.len())
+            }
+        }
+        
+        if fragment_start >= 0 {
+            result["fragment"] = rest.substring(fragment_start + 1, rest.len())
+        }
+    }
+    
+    return result
+}
+
+// HTTP client with cookies and sessions
+type HTTPClient = {
+    cookies: dict
+    session: Option[Session]
+}
+
+fn http_client() -> HTTPClient {
+    return HTTPClient {
+        cookies: cookie_jar(),
+        session: Option[Session].None
+    }
+}
+
+fn set_session(client: HTTPClient, session: Session) {
+    client.session = Option[Session].Some(session)
+}
+
+fn get_session(client: HTTPClient) -> Option[Session] {
+    return client.session
+}
+
+fn request_with_cookies(client: HTTPClient, method: string, url: string, headers: dict, body: string) -> net.Response {
+    let cookie_header = ""
+    for (name, cookie) in client.cookies {
+        cookie_header = cookie_header + format_cookie(cookie) + "; "
+    }
+    
+    if cookie_header.len > 0 {
+        headers["Cookie"] = cookie_header.substring(0, cookie_header.len() - 2)
+    }
+    
+    let response = net.request(method, url, headers, body)
+    
+    // Handle Set-Cookie header
+    match response {
+        Result[net.Response, net.Error].Ok(resp) => {
+            let set_cookie = resp.headers.get("Set-Cookie", "")
+            if set_cookie.len > 0 {
+                let cookies = parse_cookie_header(set_cookie)
+                for cookie in cookies {
+                    set_cookie(client.cookies, cookie)
+                }
+            }
+            return resp
+        }
+        Result[net.Response, net.Error].Err(_) => {
+            return net.Response {
+                status: 500,
+                headers: {},
+                body: "Error"
+            }
+        }
+    }
+}
+
+// Rate limiting
+type RateLimiter = {
+    requests: int
+    window: int
+    timestamps: [int]
+}
+
+fn rate_limiter(requests: int, window: int) -> RateLimiter {
+    return RateLimiter {
+        requests: requests,
+        window: window,
+        timestamps: []
+    }
+}
+
+fn allow(limiter: RateLimiter) -> bool {
+    let now = time.now().seconds
+    
+    // Remove old timestamps
+    limiter.timestamps = limiter.timestamps.filter(t => now - t < limiter.window)
+    
+    if limiter.timestamps.len < limiter.requests {
+        limiter.timestamps.push(now)
+        return true
+    }
+    
+    return false
+}
+
+fn wait_if_needed(limiter: RateLimiter) {
+    while !allow(limiter) {
+        let oldest = limiter.timestamps[0]
+        let wait_time = oldest + limiter.window - time.now().seconds
+        if wait_time > 0 {
+            time.sleep(wait_time * 1000)
+        }
+    }
+}

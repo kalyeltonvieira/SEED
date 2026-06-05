@@ -1,0 +1,149 @@
+module stdlib.markdown
+
+/// Simple Markdown to HTML parser module
+
+pub fn parse(md: string) -> string {
+    let result = ""
+    let lines = md.replace("\r", "").split("\n")
+    
+    let in_code_block = false
+    let in_list = false
+    
+    for line in lines {
+        let trimmed = line.trim()
+        
+        // 1. Code blocks
+        if trimmed.starts_with("```") {
+            if in_code_block {
+                result = result + "</code></pre>\n"
+                in_code_block = false
+            } else {
+                let lang = trimmed.substring(3, trimmed.len)
+                let class_attr = if lang.len > 0 { " class=\"language-" + lang + "\"" } else { "" }
+                result = result + "<pre><code" + class_attr + ">"
+                in_code_block = true
+            }
+            continue
+        }
+        
+        if in_code_block {
+            result = result + html_escape(line) + "\n"
+            continue
+        }
+        
+        // 2. Unordered Lists
+        if trimmed.starts_with("* ") || trimmed.starts_with("- ") {
+            if !in_list {
+                result = result + "<ul>\n"
+                in_list = true
+            }
+            let item_text = trimmed.substring(2, trimmed.len)
+            result = result + "  <li>" + render_inline(item_text) + "</li>\n"
+            continue
+        } else {
+            if in_list {
+                result = result + "</ul>\n"
+                in_list = false
+            }
+        }
+        
+        // 3. Headers
+        if trimmed.starts_with("# ") {
+            result = result + "<h1>" + render_inline(trimmed.substring(2, trimmed.len)) + "</h1>\n"
+            continue
+        }
+        if trimmed.starts_with("## ") {
+            result = result + "<h2>" + render_inline(trimmed.substring(3, trimmed.len)) + "</h2>\n"
+            continue
+        }
+        if trimmed.starts_with("### ") {
+            result = result + "<h3>" + render_inline(trimmed.substring(4, trimmed.len)) + "</h3>\n"
+            continue
+        }
+        
+        // 4. Blank lines
+        if trimmed.len == 0 {
+            continue
+        }
+        
+        // 5. Normal Paragraph
+        result = result + "<p>" + render_inline(trimmed) + "</p>\n"
+    }
+    
+    // Close list if file ended during a list
+    if in_list {
+        result = result + "</ul>\n"
+    }
+    
+    return result
+}
+
+fn render_inline(text: string) -> string {
+    let result = html_escape(text)
+    
+    // Bold: **text** -> <strong>text</strong>
+    if result.contains("**") {
+        let parts = result.split("**")
+        let new_res = ""
+        for i in 0..parts.len {
+            if i % 2 == 0 {
+                new_res = new_res + parts[i]
+            } else {
+                if i == parts.len - 1 {
+                    new_res = new_res + "**" + parts[i]
+                } else {
+                    new_res = new_res + "<strong>" + parts[i] + "</strong>"
+                }
+            }
+        }
+        result = new_res
+    }
+    
+    // Italic: *text* -> <em>text</em>
+    if result.contains("*") {
+        let parts = result.split("*")
+        let new_res = ""
+        for i in 0..parts.len {
+            if i % 2 == 0 {
+                new_res = new_res + parts[i]
+            } else {
+                if i == parts.len - 1 {
+                    new_res = new_res + "*" + parts[i]
+                } else {
+                    new_res = new_res + "<em>" + parts[i] + "</em>"
+                }
+            }
+        }
+        result = new_res
+    }
+    
+    // Inline code: `code` -> <code>code</code>
+    if result.contains("`") {
+        let parts = result.split("`")
+        let new_res = ""
+        for i in 0..parts.len {
+            if i % 2 == 0 {
+                new_res = new_res + parts[i]
+            } else {
+                if i == parts.len - 1 {
+                    new_res = new_res + "`" + parts[i]
+                } else {
+                    new_res = new_res + "<code>" + parts[i] + "</code>"
+                }
+            }
+        }
+        result = new_res
+    }
+    
+    return result
+}
+
+fn html_escape(s: string) -> string {
+    let result = s
+    result = result.replace("&", "&amp;")
+    result = result.replace("<", "&lt;")
+    result = result.replace(">", "&gt;")
+    result = result.replace("\"", "&quot;")
+    result = result.replace("'", "&#39;")
+    return result
+}

@@ -1,0 +1,205 @@
+{
+  "Function": {
+    "prefix": "fn",
+    "body": [
+      "fn ${1:name}(${2:params}) -> ${3:Unit} {",
+      "    ${0:// body}",
+      "}"
+    ],
+    "description": "Create a function"
+  },
+  "Main Function": {
+    "prefix": "main",
+    "body": [
+      "fn main() -> Unit {",
+      "    ${0:// body}",
+      "}"
+    ],
+    "description": "Create main function"
+  },
+  "Struct": {
+    "prefix": "struct",
+    "body": [
+      "type ${1:Name} = {",
+      "    ${2:field}: ${3:String}",
+      "}"
+    ],
+    "description": "Create a struct type"
+  },
+  "Enum": {
+    "prefix": "enum",
+    "body": [
+      "enum ${1:Name} {",
+      "    ${2:Variant},",
+      "}"
+    ],
+    "description": "Create an enum type"
+  },
+  "Trait": {
+    "prefix": "trait",
+    "body": [
+      "trait ${1:Name} {",
+      "    fn ${2:method}(${3:self}) -> ${4:Unit}",
+      "}"
+    ],
+    "description": "Create a trait"
+  },
+  "Impl": {
+    "prefix": "impl",
+    "body": [
+      "impl ${1:Type} {",
+      "    fn ${2:method}(${3:self}) -> ${4:Unit} {",
+      "        ${0:// body}",
+      "    }",
+      "}"
+    ],
+    "description": "Implement methods for a type"
+  },
+  "Test": {
+    "prefix": "test",
+    "body": [
+      "fn ${1:test_name}() -> Unit {",
+      "    ${0:// test body}",
+      "}"
+    ],
+    "description": "Create a test function"
+  },
+  "If Else": {
+    "prefix": "ifelse",
+    "body": [
+      "if ${1:condition} {",
+      "    ${2:// then}",
+      "} else {",
+      "    ${0:// else}",
+      "}"
+    ],
+    "description": "If-else statement"
+  },
+  "Match": {
+    "prefix": "match",
+    "body": [
+      "match ${1:value} {",
+      "    ${2:pattern} => ${3:result},",
+      "    ${0:_ => default}",
+      "}"
+    ],
+    "description": "Match expression"
+  },
+  "For Loop": {
+    "prefix": "for",
+    "body": [
+      "for ${1:item} in ${2:items} {",
+      "    ${0:// body}",
+      "}"
+    ],
+    "description": "For loop"
+  },
+  "While Loop": {
+    "prefix": "while",
+    "body": [
+      "while ${1:condition} {",
+      "    ${0:// body}",
+      "}"
+    ],
+    "description": "While loop"
+  },
+  "Let Variable": {
+    "prefix": "let",
+    "body": [
+      "let ${1:name} = ${2:value}"
+    ],
+    "description": "Declare a variable"
+  },
+  "Const Variable": {
+    "prefix": "const",
+    "body": [
+      "const ${1:name} = ${2:value}"
+    ],
+    "description": "Declare a constant"
+  },
+  "Import": {
+    "prefix": "import",
+    "body": [
+      "import ${1:module}"
+    ],
+    "description": "Import a module"
+  },
+  "Import with aliases": {
+    "prefix": "importas",
+    "body": [
+      "import ${1:module} as ${2:alias}"
+    ],
+    "description": "Import a module with alias"
+  },
+  "Import specific items": {
+    "prefix": "importitems",
+    "body": [
+      "import ${1:module}::{${2:item1}, ${3:item2}}"
+    ],
+    "description": "Import specific items from a module"
+  },
+  "Return": {
+    "prefix": "return",
+    "body": [
+      "return ${1:value}"
+    ],
+    "description": "Return a value"
+  },
+  "Async Function": {
+    "prefix": "async",
+    "body": [
+      "async fn ${1:name}(${2:params}) -> ${3:Unit} {",
+      "    ${0:// body}",
+      "}"
+    ],
+    "description": "Create an async function"
+  },
+  "Await": {
+    "prefix": "await",
+    "body": [
+      "await ${1:expression}"
+    ],
+    "description": "Await an async expression"
+  },
+  "Spawn": {
+    "prefix": "spawn",
+    "body": [
+      "spawn ${1:task}"
+    ],
+    "description": "Spawn a concurrent task"
+  },
+  "Module": {
+    "prefix": "module",
+    "body": [
+      "module ${1:name}"
+    ],
+    "description": "Declare a module"
+  },
+  "Public Function": {
+    "prefix": "pubfn",
+    "body": [
+      "pub fn ${1:name}(${2:params}) -> ${3:Unit} {",
+      "    ${0:// body}",
+      "}"
+    ],
+    "description": "Create a public function"
+  },
+  "Effect Function": {
+    "prefix": "effect",
+    "body": [
+      "fn ${1:name}(${2:params}) effect ${3:io} -> ${4:Unit} {",
+      "    ${0:// body}",
+      "}"
+    ],
+    "description": "Create a function with effects"
+  },
+  "Contract": {
+    "prefix": "contract",
+    "body": [
+      "contract ${1:name}(${2:params}) {",
+      "    ${0:// body}",
+      "}"
+    ],
+    "description": "Create a contract"
+  }
+}

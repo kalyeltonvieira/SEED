@@ -1,0 +1,35 @@
+module stdlib.dotenv
+
+/// Environment variable loader from .env files
+
+pub fn load(path: string) -> Map<string, string> {
+    return syscall.dotenv_load(path)
+}
+
+pub fn load_default() -> Map<string, string> {
+    return load(".env")
+}
+
+pub fn get(key: string) -> string {
+    return os.env(key)
+}
+
+pub fn get_or(key: string, default: string) -> string {
+    let value = os.env(key)
+    if value.len == 0 {
+        return default
+    }
+    return value
+}
+
+pub fn set(key: string, value: string) {
+    os.set_env(key, value)
+}
+
+pub fn parse(content: string) -> Map<string, string> {
+    return syscall.dotenv_parse(content)
+}
+
+pub fn stringify(vars: Map<string, string>) -> string {
+    return syscall.dotenv_stringify(vars)
+}

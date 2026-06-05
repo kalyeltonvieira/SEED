@@ -1,0 +1,391 @@
+module microservice
+
+import stdlib.io
+import stdlib.net
+import stdlib.json
+import stdlib.db
+import stdlib.crypto
+import stdlib.time
+import stdlib.http
+
+/// Microservice REST API com autenticação, rate limiting e logging
+
+type Microservice = {
+    name: string
+    port: int
+    database: db.Database
+    logger: logger.Logger
+    rate_limiter: http.RateLimiter
+    sessions: dict
+}
+
+type APIRequest = {
+    method: string
+    path: string
+    headers: dict
+    body: string
+    session: Option[http.Session]
+}
+
+type APIResponse = {
+    status: int
+    headers: dict
+    body: string
+}
+
+type Route = {
+    method: string
+    path: string
+    handler: fn(APIRequest) -> APIResponse
+    auth_required: bool
+}
+
+type User = {
+    id: int
+    username: string
+    email: string
+    password_hash: string
+    created_at: time.Timestamp
+}
+
+fn microservice(name: string, port: int) -> Microservice {
+    let log = logger.logger(name)
+    
+    return Microservice {
+        name: name,
+        port: port,
+        database: null,
+        logger: log,
+        rate_limiter: http.rate_limiter(100, 60),
+        sessions: dict()
+    }
+}
+
+fn init_database(service: Microservice, path: string) {
+    service.database = db.sqlite_open(path).unwrap()
+    
+    service.database.execute("
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE,
+            email TEXT UNIQUE,
+            password_hash TEXT,
+            created_at INTEGER
+        )
+    ", []).unwrap()
+    
+    service.database.execute("
+        CREATE TABLE IF NOT EXISTS posts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            title TEXT,
+            content TEXT,
+            created_at INTEGER,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    ", []).unwrap()
+}
+
+fn add_route(service: Microservice, method: string, path: string, handler: fn(APIRequest) -> APIResponse, auth_required: bool) {
+    // In real implementation, store routes in a registry
+}
+
+fn handle_request(service: Microservice, req: net.Request) -> net.Response {
+    let api_req = APIRequest {
+        method: req.method,
+        path: req.url,
+        headers: req.headers,
+        body: req.body,
+        session: Option[http.Session].None
+    }
+    
+    // Check session cookie
+    let cookie_header = req.headers.get("Cookie", "")
+    if cookie_header.len > 0 {
+        let cookies = http.parse_cookie_header(cookie_header)
+        for cookie in cookies {
+            if cookie.name == "session_id" {
+                api_req.session = http.load_session(service.sessions, cookie.value)
+            }
+        }
+    }
+    
+    // Rate limiting
+    if !http.allow(service.rate_limiter) {
+        return error_response(429, "Too many requests")
+    }
+    
+    // Route to handler
+    let api_resp = route_request(service, api_req)
+    
+    return net.Response {
+        status: api_resp.status,
+        headers: api_resp.headers,
+        body: api_resp.body
+    }
+}
+
+fn route_request(service: Microservice, req: APIRequest) -> APIResponse {
+    let path_parts = req.path.split("/")
+    
+    match req.method {
+        "GET" => {
+            if path_parts[1] == "health" {
+                return health_check(req)
+            } else if path_parts[1] == "users" {
+                return get_users(service, req)
+            } else if path_parts[1] == "posts" {
+                return get_posts(service, req)
+            }
+        }
+        "POST" => {
+            if path_parts[1] == "register" {
+                return register_user(service, req)
+            } else if path_parts[1] == "login" {
+                return login_user(service, req)
+            } else if path_parts[1] == "posts" {
+                return create_post(service, req)
+            }
+        }
+        "PUT" => {
+            if path_parts.len > 2 && path_parts[1] == "posts" {
+                return update_post(service, req, path_parts[2])
+            }
+        }
+        "DELETE" => {
+            if path_parts.len > 2 && path_parts[1] == "posts" {
+                return delete_post(service, req, path_parts[2])
+            }
+        }
+    }
+    
+    return error_response(404, "Not found")
+}
+
+fn health_check(req: APIRequest) -> APIResponse {
+    return json_response(200, json.object([
+        ("status", json.string("healthy")),
+        ("timestamp", json.string(time.format(time.now(), "%Y-%m-%d %H:%M:%S")))
+    ]))
+}
+
+fn get_users(service: Microservice, req: APIRequest) -> APIResponse {
+    let rows = service.database.query("SELECT id, username, email, created_at FROM users", []).unwrap()
+    
+    let users = []
+    for row in rows.data {
+        users.push(json.object([
+            ("id", json.number(row[0])),
+            ("username", json.string(row[1])),
+            ("email", json.string(row[2])),
+            ("created_at", json.string(row[3]))
+        ]))
+    }
+    
+    return json_response(200, json.array(users))
+}
+
+fn register_user(service: Microservice, req: APIRequest) -> APIResponse {
+    let data = json.parse(req.body).unwrap()
+    
+    let username = data.data.get("username").unwrap().data
+    let email = data.data.get("email").unwrap().data
+    let password = data.data.get("password").unwrap().data
+    
+    let password_hash = crypto.bcrypt_hash(password)
+    
+    service.database.execute(
+        "INSERT INTO users (username, email, password_hash, created_at) VALUES (?, ?, ?, ?)",
+        [username, email, password_hash, time.now().seconds]
+    ).unwrap()
+    
+    logger.info(service.logger, "User registered: " + username)
+    
+    return json_response(201, json.object([
+        ("message", json.string("User created")),
+        ("username", json.string(username))
+    ]))
+}
+
+fn login_user(service: Microservice, req: APIRequest) -> APIResponse {
+    let data = json.parse(req.body).unwrap()
+    
+    let username = data.data.get("username").unwrap().data
+    let password = data.data.get("password").unwrap().data
+    
+    let rows = service.database.query(
+        "SELECT id, password_hash FROM users WHERE username = ?",
+        [username]
+    ).unwrap()
+    
+    if rows.data.len == 0 {
+        return error_response(401, "Invalid credentials")
+    }
+    
+    let user = rows.data[0]
+    let password_hash = user[1]
+    
+    if !crypto.bcrypt_verify(password, password_hash) {
+        return error_response(401, "Invalid credentials")
+    }
+    
+    // Create session
+    let session_data = dict([
+        ("user_id", user[0])
+    ])
+    let session = http.create_session(session_data, 3600)
+    http.save_session(service.sessions, session)
+    
+    logger.info(service.logger, "User logged in: " + username)
+    
+    let response = json_response(200, json.object([
+        ("message", json.string("Login successful")),
+        ("session_id", json.string(session.id))
+    ]))
+    
+    response.headers["Set-Cookie"] = http.format_cookie(http.Cookie {
+        name: "session_id",
+        value: session.id,
+        domain: "",
+        path: "/",
+        expires: "",
+        secure: false,
+        http_only: true
+    })
+    
+    return response
+}
+
+fn get_posts(service: Microservice, req: APIRequest) -> APIResponse {
+    let rows = service.database.query(
+        "SELECT p.id, p.title, p.content, p.created_at, u.username FROM posts p JOIN users u ON p.user_id = u.id ORDER BY p.created_at DESC",
+        []
+    ).unwrap()
+    
+    let posts = []
+    for row in rows.data {
+        posts.push(json.object([
+            ("id", json.number(row[0])),
+            ("title", json.string(row[1])),
+            ("content", json.string(row[2])),
+            ("created_at", json.string(row[3])),
+            ("author", json.string(row[4]))
+        ]))
+    }
+    
+    return json_response(200, json.array(posts))
+}
+
+fn create_post(service: Microservice, req: APIRequest) -> APIResponse {
+    // Check auth
+    match req.session {
+        Option[http.Session].None => {
+            return error_response(401, "Unauthorized")
+        }
+        Option[http.Session].Some(s) => {}
+    }
+    
+    let data = json.parse(req.body).unwrap()
+    
+    let title = data.data.get("title").unwrap().data
+    let content = data.data.get("content").unwrap().data
+    let user_id = req.session.unwrap().data["user_id"]
+    
+    service.database.execute(
+        "INSERT INTO posts (user_id, title, content, created_at) VALUES (?, ?, ?, ?)",
+        [user_id, title, content, time.now().seconds]
+    ).unwrap()
+    
+    logger.info(service.logger, "Post created: " + title)
+    
+    return json_response(201, json.object([
+        ("message", json.string("Post created")),
+        ("title", json.string(title))
+    ]))
+}
+
+fn update_post(service: Microservice, req: APIRequest, post_id: string) -> APIResponse {
+    let data = json.parse(req.body).unwrap()
+    
+    let title = data.data.get("title").unwrap().data
+    let content = data.data.get("content").unwrap().data
+    
+    service.database.execute(
+        "UPDATE posts SET title = ?, content = ? WHERE id = ?",
+        [title, content, post_id.to_int()]
+    ).unwrap()
+    
+    logger.info(service.logger, "Post updated: " + post_id)
+    
+    return json_response(200, json.object([
+        ("message", json.string("Post updated"))
+    ]))
+}
+
+fn delete_post(service: Microservice, req: APIRequest, post_id: string) -> APIResponse {
+    service.database.execute(
+        "DELETE FROM posts WHERE id = ?",
+        [post_id.to_int()]
+    ).unwrap()
+    
+    logger.info(service.logger, "Post deleted: " + post_id)
+    
+    return json_response(200, json.object([
+        ("message", json.string("Post deleted"))
+    ]))
+}
+
+fn json_response(status: int, data: json.Value) -> APIResponse {
+    return APIResponse {
+        status: status,
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: json.stringify(data).unwrap()
+    }
+}
+
+fn error_response(status: int, message: string) -> APIResponse {
+    return json_response(status, json.object([
+        ("error", json.string(message))
+    ]))
+}
+
+fn middleware_logging(service: Microservice, handler: fn(APIRequest) -> APIResponse) -> APIResponse {
+    let start = time.now()
+    logger.info(service.logger, handler.method + " " + handler.path)
+    
+    let response = handler(handler)
+    
+    let duration = time.elapsed(start)
+    logger.info(service.logger, "Response: " + response.status.to_string() + " (" + time.to_millis(duration).to_string() + "ms)")
+    
+    return response
+}
+
+fn middleware_cors(handler: fn(APIRequest) -> APIResponse) -> APIResponse {
+    let response = handler(handler)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    return response
+}
+
+fn start(service: Microservice) {
+    println("=== " + service.name + " ===")
+    println("Port: " + service.port.to_string())
+    println("")
+    
+    net.serve(service.port, fn(req: net.Request) -> net.Response {
+        return handle_request(service, req)
+    })
+}
+
+fn main() {
+    let service = microservice("SEED Microservice", 3000)
+    
+    init_database(service, "microservice.db")
+    
+    println("Starting microservice...")
+    start(service)
+}

@@ -1,0 +1,311 @@
+module stdlib.regex
+
+/// Expressões regulares para SEED
+
+type Regex = {
+    pattern: string
+    flags: string
+}
+
+type Match = {
+    text: string
+    start: int
+    end: int
+    groups: [string]
+}
+
+fn regex(pattern: string) -> Regex {
+    return Regex {
+        pattern: pattern,
+        flags: ""
+    }
+}
+
+fn regex_with_flags(pattern: string, flags: string) -> Regex {
+    return Regex {
+        pattern: pattern,
+        flags: flags
+    }
+}
+
+fn is_match(re: Regex, text: string) -> bool {
+    return syscall.regex_match(re.pattern, text, re.flags)
+}
+
+fn find(re: Regex, text: string) -> Option[Match] {
+    let result = syscall.regex_find(re.pattern, text, re.flags)
+    
+    if result == null {
+        return Option[Match].None
+    }
+    
+    return Option[Match].Some(result)
+}
+
+fn find_all(re: Regex, text: string) -> [Match] {
+    return syscall.regex_find_all(re.pattern, text, re.flags)
+}
+
+fn replace(re: Regex, text: string, replacement: string) -> string {
+    return syscall.regex_replace(re.pattern, text, replacement, re.flags)
+}
+
+fn replace_all(re: Regex, text: string, replacement: string) -> string {
+    return syscall.regex_replace_all(re.pattern, text, replacement, re.flags)
+}
+
+fn split(re: Regex, text: string) -> [string] {
+    return syscall.regex_split(re.pattern, text, re.flags)
+}
+
+// Common patterns
+fn email_regex() -> Regex {
+    return regex(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
+}
+
+fn url_regex() -> Regex {
+    return regex(r"https?://[^\s/$.?#].[^\s]*")
+}
+
+fn phone_regex() -> Regex {
+    return regex(r"\+?[\d\s-]{10,}")
+}
+
+fn date_regex() -> Regex {
+    return regex(r"\d{4}-\d{2}-\d{2}")
+}
+
+fn time_regex() -> Regex {
+    return regex(r"\d{2}:\d{2}:\d{2}")
+}
+
+fn ipv4_regex() -> Regex {
+    return regex(r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}")
+}
+
+fn ipv6_regex() -> Regex {
+    return regex(r"([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}")
+}
+
+fn hex_color_regex() -> Regex {
+    return regex(r"#[0-9a-fA-F]{6}")
+}
+
+fn uuid_regex() -> Regex {
+    return regex(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+}
+
+fn word_regex() -> Regex {
+    return regex(r"\b\w+\b")
+}
+
+fn number_regex() -> Regex {
+    return regex(r"\b\d+(\.\d+)?\b")
+}
+
+fn whitespace_regex() -> Regex {
+    return regex(r"\s+")
+}
+
+// Validation functions
+fn is_email(text: string) -> bool {
+    return is_match(email_regex(), text)
+}
+
+fn is_url(text: string) -> bool {
+    return is_match(url_regex(), text)
+}
+
+fn is_phone(text: string) -> bool {
+    return is_match(phone_regex(), text)
+}
+
+fn is_date(text: string) -> bool {
+    return is_match(date_regex(), text)
+}
+
+fn is_ipv4(text: string) -> bool {
+    return is_match(ipv4_regex(), text)
+}
+
+fn is_ipv6(text: string) -> bool {
+    return is_match(ipv6_regex(), text)
+}
+
+fn is_uuid(text: string) -> bool {
+    return is_match(uuid_regex(), text)
+}
+
+fn is_hex_color(text: string) -> bool {
+    return is_match(hex_color_regex(), text)
+}
+
+// Extraction functions
+fn extract_emails(text: string) -> [string] {
+    let matches = find_all(email_regex(), text)
+    return matches.map(m => m.text)
+}
+
+fn extract_urls(text: string) -> [string] {
+    let matches = find_all(url_regex(), text)
+    return matches.map(m => m.text)
+}
+
+fn extract_phone_numbers(text: string) -> [string] {
+    let matches = find_all(phone_regex(), text)
+    return matches.map(m => m.text)
+}
+
+fn extract_dates(text: string) -> [string] {
+    let matches = find_all(date_regex(), text)
+    return matches.map(m => m.text)
+}
+
+fn extract_numbers(text: string) -> [string] {
+    let matches = find_all(number_regex(), text)
+    return matches.map(m => m.text)
+}
+
+fn extract_words(text: string) -> [string] {
+    let matches = find_all(word_regex(), text)
+    return matches.map(m => m.text)
+}
+
+// Sanitization functions
+fn sanitize_html(text: string) -> string {
+    let html_tag = regex(r"<[^>]*>")
+    return replace_all(html_tag, text, "")
+}
+
+fn sanitize_sql(text: string) -> string {
+    let sql_chars = regex(r"[;\'\"]")
+    return replace_all(sql_chars, text, "")
+}
+
+fn sanitize_filename(text: string) -> string {
+    let invalid_chars = regex(r"[<>:\"/\\|?*]")
+    return replace_all(invalid_chars, text, "_")
+}
+
+// Pattern builders
+fn starts_with(prefix: string) -> Regex {
+    return regex("^" + escape_regex(prefix))
+}
+
+fn ends_with(suffix: string) -> Regex {
+    return regex(escape_regex(suffix) + "$")
+}
+
+fn contains(substring: string) -> Regex {
+    return regex(escape_regex(substring))
+}
+
+fn either(patterns: [string]) -> Regex {
+    let escaped = patterns.map(p => escape_regex(p))
+    return regex("(" + escaped.join("|") + ")")
+}
+
+fn one_or_more(pattern: string) -> Regex {
+    return regex(escape_regex(pattern) + "+")
+}
+
+fn zero_or_more(pattern: string) -> Regex {
+    return regex(escape_regex(pattern) + "*")
+}
+
+fn optional(pattern: string) -> Regex {
+    return regex(escape_regex(pattern) + "?")
+}
+
+fn repeat(pattern: string, min: int, max: int) -> Regex {
+    return regex(escape_regex(pattern) + "{" + min.to_string() + "," + max.to_string() + "}")
+}
+
+fn escape_regex(pattern: string) -> string {
+    let special = [".", "^", "$", "*", "+", "?", "(", ")", "[", "]", "{", "}", "|", "\\"]
+    let result = pattern
+    
+    for char in special {
+        result = result.replace(char, "\\" + char)
+    }
+    
+    return result
+}
+
+// Advanced patterns
+fn range(from: string, to: string) -> Regex {
+    return regex("[" + from + "-" + to + "]")
+}
+
+fn not_range(from: string, to: string) -> Regex {
+    return regex("[^" + from + "-" + to + "]")
+}
+
+fn digit() -> Regex {
+    return regex("\\d")
+}
+
+fn non_digit() -> Regex {
+    return regex("\\D")
+}
+
+fn word_char() -> Regex {
+    return regex("\\w")
+}
+
+fn non_word_char() -> Regex {
+    return regex("\\W")
+}
+
+fn whitespace() -> Regex {
+    return regex("\\s")
+}
+
+fn non_whitespace() -> Regex {
+    return regex("\\S")
+}
+
+fn boundary() -> Regex {
+    return regex("\\b")
+}
+
+fn non_boundary() -> Regex {
+    return regex("\\B")
+}
+
+// Lookahead/lookbehind
+fn lookahead(pattern: string) -> Regex {
+    return regex("(?=" + pattern + ")")
+}
+
+fn negative_lookahead(pattern: string) -> Regex {
+    return regex("(?!" + pattern + ")")
+}
+
+fn lookbehind(pattern: string) -> Regex {
+    return regex("(?<=" + pattern + ")")
+}
+
+fn negative_lookbehind(pattern: string) -> Regex {
+    return regex("(?<!" + pattern + ")")
+}
+
+// Named groups
+fn named_group(name: string, pattern: string) -> Regex {
+    return regex("(?<" + name + ">" + pattern + ")")
+}
+
+// Case insensitive
+fn case_insensitive(pattern: string) -> Regex {
+    return regex_with_flags(pattern, "i")
+}
+
+// Multiline
+fn multiline(pattern: string) -> Regex {
+    return regex_with_flags(pattern, "m")
+}
+
+// Global
+fn global(pattern: string) -> Regex {
+    return regex_with_flags(pattern, "g")
+}

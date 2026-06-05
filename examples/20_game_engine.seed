@@ -1,0 +1,570 @@
+module game_engine
+
+/// SEED 2D Game Engine
+/// ECS, sprites, collision, audio, input, UI, tilemap, particles, physics
+
+type Vector2 = {
+    x: float
+    y: float
+}
+
+type Rect = {
+    x: float
+    y: float
+    width: float
+    height: float
+}
+
+type Color = {
+    r: int
+    g: int
+    b: int
+    a: int
+}
+
+type Sprite = {
+    texture: string
+    frame: int
+    frame_count: int
+    frame_time: float
+    current_time: float
+    flip_x: bool
+    flip_y: bool
+}
+
+type Component = {
+    type: string
+    data: any
+}
+
+type Entity = {
+    id: int
+    components: dict
+}
+
+type Engine = {
+    entities: [Entity]
+    next_entity_id: int
+    systems: [fn(Engine)]
+    delta_time: float
+    target_fps: int
+    running: bool
+}
+
+type InputState = {
+    keys: dict
+    mouse_pos: Vector2
+    mouse_buttons: dict
+}
+
+type Audio = {
+    sounds: dict
+    music: string
+    volume: float
+}
+
+type UIElement = {
+    type: string
+    position: Vector2
+    size: Vector2
+    text: string
+    callback: fn()
+}
+
+type Tilemap = {
+    tiles: [[int]]
+    tile_size: int
+    tileset: string
+}
+
+type Particle = {
+    position: Vector2
+    velocity: Vector2
+    lifetime: float
+    color: Color
+}
+
+// Vector2 operations
+fn vec2(x: float, y: float) -> Vector2 {
+    return Vector2 { x: x, y: y }
+}
+
+fn vec2_add(a: Vector2, b: Vector2) -> Vector2 {
+    return vec2(a.x + b.x, a.y + b.y)
+}
+
+fn vec2_sub(a: Vector2, b: Vector2) -> Vector2 {
+    return vec2(a.x - b.x, a.y - b.y)
+}
+
+fn vec2_mul(v: Vector2, s: float) -> Vector2 {
+    return vec2(v.x * s, v.y * s)
+}
+
+fn vec2_len(v: Vector2) -> float {
+    return math.sqrt(v.x * v.x + v.y * v.y)
+}
+
+fn vec2_normalize(v: Vector2) -> Vector2 {
+    let len = vec2_len(v)
+    if len > 0 {
+        return vec2_mul(v, 1.0 / len)
+    }
+    return v
+}
+
+// Color operations
+fn color(r: int, g: int, b: int, a: int) -> Color {
+    return Color { r: r, g: g, b: b, a: a }
+}
+
+fn color_to_hex(c: Color) -> string {
+    return "#" + c.r.to_hex() + c.g.to_hex() + c.b.to_hex()
+}
+
+// Engine initialization
+fn engine() -> Engine {
+    return Engine {
+        entities: [],
+        next_entity_id: 0,
+        systems: [],
+        delta_time: 0.016,
+        target_fps: 60,
+        running: true
+    }
+}
+
+// Entity Component System
+fn create_entity(engine: Engine) -> Entity {
+    let entity = Entity {
+        id: engine.next_entity_id,
+        components: dict()
+    }
+    engine.next_entity_id = engine.next_entity_id + 1
+    engine.entities.push(entity)
+    return entity
+}
+
+fn add_component(entity: Entity, component_type: string, data: any) {
+    entity.components[component_type] = Component {
+        type: component_type,
+        data: data
+    }
+}
+
+fn get_component(entity: Entity, component_type: string) -> Option[Component] {
+    if entity.components.contains(component_type) {
+        return Option[Component].Some(entity.components[component_type])
+    }
+    return Option[Component].None
+}
+
+fn has_component(entity: Entity, component_type: string) -> bool {
+    return entity.components.contains(component_type)
+}
+
+// Common component types
+fn transform_component(position: Vector2, rotation: float, scale: Vector2) -> Component {
+    return Component {
+        type: "transform",
+        data: dict([
+            ("position", position),
+            ("rotation", rotation),
+            ("scale", scale)
+        ])
+    }
+}
+
+fn sprite_component(texture: string, frame_count: int) -> Component {
+    return Component {
+        type: "sprite",
+        data: Sprite {
+            texture: texture,
+            frame: 0,
+            frame_count: frame_count,
+            frame_time: 0.1,
+            current_time: 0.0,
+            flip_x: false,
+            flip_y: false
+        }
+    }
+}
+
+fn physics_component(velocity: Vector2, mass: float) -> Component {
+    return Component {
+        type: "physics",
+        data: dict([
+            ("velocity", velocity),
+            ("acceleration", vec2(0, 0)),
+            ("mass", mass),
+            ("gravity", vec2(0, 9.8))
+        ])
+    }
+}
+
+fn collider_component(bounds: Rect, is_trigger: bool) -> Component {
+    return Component {
+        type: "collider",
+        data: dict([
+            ("bounds", bounds),
+            ("is_trigger", is_trigger)
+        ])
+    }
+}
+
+// Systems
+fn add_system(engine: Engine, system: fn(Engine)) {
+    engine.systems.push(system)
+}
+
+fn transform_system(engine: Engine) {
+    for entity in engine.entities {
+        match get_component(entity, "transform") {
+            Option[Component].Some(transform) => {
+                let pos = transform.data["position"]
+                // Update position based on velocity
+                match get_component(entity, "physics") {
+                    Option[Component].Some(physics) => {
+                        let vel = physics.data["velocity"]
+                        transform.data["position"] = vec2_add(pos, vec2_mul(vel, engine.delta_time))
+                    }
+                    Option[Component].None => {}
+                }
+            }
+            Option[Component].None => {}
+        }
+    }
+}
+
+fn sprite_system(engine: Engine) {
+    for entity in engine.entities {
+        match get_component(entity, "sprite") {
+            Option[Component].Some(sprite) => {
+                let s = sprite.data
+                s.current_time = s.current_time + engine.delta_time
+                if s.current_time >= s.frame_time {
+                    s.frame = (s.frame + 1) % s.frame_count
+                    s.current_time = 0.0
+                }
+            }
+            Option[Component].None => {}
+        }
+    }
+}
+
+fn physics_system(engine: Engine) {
+    for entity in engine.entities {
+        match get_component(entity, "physics") {
+            Option[Component].Some(physics) => {
+                let phys = physics.data
+                let vel = phys["velocity"]
+                let acc = phys["acceleration"]
+                let gravity = phys["gravity"]
+                
+                // Apply gravity
+                acc = vec2_add(acc, gravity)
+                
+                // Update velocity
+                vel = vec2_add(vel, vec2_mul(acc, engine.delta_time))
+                
+                // Reset acceleration
+                phys["acceleration"] = vec2(0, 0)
+                phys["velocity"] = vel
+            }
+            Option[Component].None => {}
+        }
+    }
+}
+
+fn collision_system(engine: Engine) {
+    let colliders = []
+    
+    for entity in engine.entities {
+        match get_component(entity, "collider") {
+            Option[Component].Some(collider) => {
+                match get_component(entity, "transform") {
+                    Option[Component].Some(transform) => {
+                        colliders.push((entity, collider, transform))
+                    }
+                    Option[Component].None => {}
+                }
+            }
+            Option[Component].None => {}
+        }
+    }
+    
+    // Check collisions
+    for i in 0..colliders.len {
+        for j in (i + 1)..colliders.len {
+            let (entity_a, col_a, trans_a) = colliders[i]
+            let (entity_b, col_b, trans_b) = colliders[j]
+            
+            let bounds_a = col_a.data["bounds"]
+            let bounds_b = col_b.data["bounds"]
+            
+            if aabb_collision(bounds_a, bounds_b) {
+                // Handle collision
+                handle_collision(engine, entity_a, entity_b)
+            }
+        }
+    }
+}
+
+fn aabb_collision(a: Rect, b: Rect) -> bool {
+    return a.x < b.x + b.width &&
+           a.x + a.width > b.x &&
+           a.y < b.y + b.height &&
+           a.y + a.height > b.y
+}
+
+fn handle_collision(engine: Engine, entity_a: Entity, entity_b: Entity) {
+    // Simple collision response
+    match get_component(entity_a, "physics") {
+        Option[Component].Some(phys_a) => {
+            let vel = phys_a.data["velocity"]
+            phys_a.data["velocity"] = vec2_mul(vel, -0.5)
+        }
+        Option[Component].None => {}
+    }
+}
+
+// Input handling
+type Input = {
+    state: InputState
+}
+
+fn input() -> Input {
+    return Input {
+        state: InputState {
+            keys: dict(),
+            mouse_pos: vec2(0, 0),
+            mouse_buttons: dict()
+        }
+    }
+}
+
+fn is_key_down(input: Input, key: string) -> bool {
+    return input.state.keys.get(key, false)
+}
+
+fn get_mouse_pos(input: Input) -> Vector2 {
+    return input.state.mouse_pos
+}
+
+fn is_mouse_down(input: Input, button: string) -> bool {
+    return input.state.mouse_buttons.get(button, false)
+}
+
+// Audio
+fn audio() -> Audio {
+    return Audio {
+        sounds: dict(),
+        music: "",
+        volume: 1.0
+    }
+}
+
+fn load_sound(audio: Audio, name: string, path: string) {
+    audio.sounds[name] = path
+}
+
+fn play_sound(audio: Audio, name: string) {
+    if audio.sounds.contains(name) {
+        // Play sound
+    }
+}
+
+fn play_music(audio: Audio, path: string) {
+    audio.music = path
+}
+
+// UI
+fn ui_button(position: Vector2, size: Vector2, text: string, callback: fn()) -> UIElement {
+    return UIElement {
+        type: "button",
+        position: position,
+        size: size,
+        text: text,
+        callback: callback
+    }
+}
+
+fn ui_text(position: Vector2, text: string) -> UIElement {
+    return UIElement {
+        type: "text",
+        position: position,
+        size: vec2(0, 0),
+        text: text,
+        callback: fn() {}
+    }
+}
+
+fn ui_progress_bar(position: Vector2, size: Vector2, progress: float) -> UIElement {
+    return UIElement {
+        type: "progress",
+        position: position,
+        size: size,
+        text: progress.to_string(),
+        callback: fn() {}
+    }
+}
+
+// Tilemap
+fn tilemap(width: int, height: int, tile_size: int) -> Tilemap {
+    let tiles = []
+    for y in 0..height {
+        let row = []
+        for x in 0..width {
+            row.push(0)
+        }
+        tiles.push(row)
+    }
+    
+    return Tilemap {
+        tiles: tiles,
+        tile_size: tile_size,
+        tileset: ""
+    }
+}
+
+fn set_tile(tilemap: Tilemap, x: int, y: int, tile_id: int) {
+    if y >= 0 && y < tilemap.tiles.len && x >= 0 && x < tilemap.tiles[0].len {
+        tilemap.tiles[y][x] = tile_id
+    }
+}
+
+fn get_tile(tilemap: Tilemap, x: int, y: int) -> int {
+    if y >= 0 && y < tilemap.tiles.len && x >= 0 && x < tilemap.tiles[0].len {
+        return tilemap.tiles[y][x]
+    }
+    return 0
+}
+
+// Particles
+type ParticleSystem = {
+    particles: [Particle]
+}
+
+fn particle_system() -> ParticleSystem {
+    return ParticleSystem {
+        particles: []
+    }
+}
+
+fn emit(ps: ParticleSystem, position: Vector2, velocity: Vector2, lifetime: float, color: Color) {
+    ps.particles.push(Particle {
+        position: position,
+        velocity: velocity,
+        lifetime: lifetime,
+        color: color
+    })
+}
+
+fn update_particles(ps: ParticleSystem, delta_time: float) {
+    let alive = []
+    for p in ps.particles {
+        p.position = vec2_add(p.position, vec2_mul(p.velocity, delta_time))
+        p.lifetime = p.lifetime - delta_time
+        
+        if p.lifetime > 0 {
+            alive.push(p)
+        }
+    }
+    ps.particles = alive
+}
+
+// Main loop
+fn run(engine: Engine) {
+    let last_time = time.now()
+    
+    while engine.running {
+        let current_time = time.now()
+        engine.delta_time = time.to_seconds(time.elapsed(last_time))
+        last_time = current_time
+        
+        // Cap delta time
+        if engine.delta_time > 0.1 {
+            engine.delta_time = 0.1
+        }
+        
+        // Run systems
+        for system in engine.systems {
+            system(engine)
+        }
+        
+        // Render
+        render(engine)
+        
+        // Target FPS
+        let frame_time = 1.0 / engine.target_fps
+        if engine.delta_time < frame_time {
+            time.sleep((frame_time - engine.delta_time) * 1000)
+        }
+    }
+}
+
+fn render(engine: Engine) {
+    // Render all entities
+    for entity in engine.entities {
+        match get_component(entity, "transform") {
+            Option[Component].Some(transform) => {
+                match get_component(entity, "sprite") {
+                    Option[Component].Some(sprite) => {
+                        let pos = transform.data["position"]
+                        // Render sprite at position
+                    }
+                    Option[Component].None => {}
+                }
+            }
+            Option[Component].None => {}
+        }
+    }
+}
+
+// Platform game example
+fn create_platform_game() -> Engine {
+    let eng = engine()
+    
+    // Add systems
+    add_system(eng, transform_system)
+    add_system(eng, sprite_system)
+    add_system(eng, physics_system)
+    add_system(eng, collision_system)
+    
+    // Create player
+    let player = create_entity(eng)
+    add_component(player, "transform", transform_component(vec2(100, 100), 0.0, vec2(1, 1)))
+    add_component(player, "sprite", sprite_component("player.png", 4))
+    add_component(player, "physics", physics_component(vec2(0, 0), 1.0))
+    add_component(player, "collider", collider_component(Rect { x: 0, y: 0, width: 32, height: 32 }, false))
+    
+    // Create platforms
+    for i in 0..5 {
+        let platform = create_entity(eng)
+        add_component(platform, "transform", transform_component(vec2(i * 100, 300), 0.0, vec2(1, 1)))
+        add_component(platform, "sprite", sprite_component("platform.png", 1))
+        add_component(platform, "collider", collider_component(Rect { x: 0, y: 0, width: 100, height: 32 }, true))
+    }
+    
+    // Create coins
+    for i in 0..3 {
+        let coin = create_entity(eng)
+        add_component(coin, "transform", transform_component(vec2(150 + i * 50, 250), 0.0, vec2(1, 1)))
+        add_component(coin, "sprite", sprite_component("coin.png", 8))
+        add_component(coin, "collider", collider_component(Rect { x: 0, y: 0, width: 16, height: 16 }, true))
+    }
+    
+    return eng
+}
+
+fn main() {
+    println("SEED 2D Game Engine v1.0")
+    println("Criando jogo de plataforma...")
+    
+    let eng = create_platform_game()
+    
+    println("Iniciando engine...")
+    run(eng)
+    
+    println("Jogo encerrado.")
+}

@@ -1,0 +1,45 @@
+module stdlib.email
+
+/// Email sending and parsing module
+
+pub type Email = {
+    from: string,
+    to: [string],
+    cc: [string],
+    bcc: [string],
+    subject: string,
+    body: string,
+    html_body: string,
+    attachments: [Attachment]
+}
+
+pub type Attachment = {
+    filename: string,
+    mime_type: string,
+    data: string
+}
+
+pub type SMTPConfig = {
+    host: string,
+    port: int,
+    username: string,
+    password: string,
+    use_tls: bool
+}
+
+pub fn email(from: string, to: [string], subject: string, body: string) -> Email {
+    return Email {
+        from: from,
+        to: to,
+        cc: [],
+        bcc: [],
+        subject: subject,
+        body: body,
+        html_body: "",
+        attachments: []
+    }
+}
+
+pub fn send_smtp(email_msg: Email, config: SMTPConfig) -> Result[bool, string] {
+    return syscall.email_send_smtp(email_msg, config)
+}

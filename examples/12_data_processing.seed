@@ -1,0 +1,227 @@
+module data_processing
+
+import stdlib.io
+import stdlib.csv
+import stdlib.json
+import stdlib.math
+import stdlib.collections
+
+/// Processamento de dados com CSV, agregação e estatísticas
+
+type DataProcessor = {
+    data: [[string]]
+    headers: [string]
+}
+
+fn load_csv(path: string) -> DataProcessor {
+    let content = fs.read_file(path)
+    let (headers, rows) = csv.parse_csv_with_header(content)
+    
+    return DataProcessor {
+        data: rows,
+        headers: headers
+    }
+}
+
+fn filter(processor: DataProcessor, column: string, value: string) -> DataProcessor {
+    let col_index = processor.headers.index_of(column).unwrap()
+    let filtered = []
+    
+    for row in processor.data {
+        if row[col_index] == value {
+            filtered.push(row)
+        }
+    }
+    
+    return DataProcessor {
+        data: filtered,
+        headers: processor.headers
+    }
+}
+
+fn filter_fn(processor: DataProcessor, fn: fn([string]) -> bool) -> DataProcessor {
+    let filtered = []
+    
+    for row in processor.data {
+        if fn(row) {
+            filtered.push(row)
+        }
+    }
+    
+    return DataProcessor {
+        data: filtered,
+        headers: processor.headers
+    }
+}
+
+fn select(processor: DataProcessor, columns: [string]) -> DataProcessor {
+    let indices = []
+    for col in columns {
+        indices.push(processor.headers.index_of(col).unwrap())
+    }
+    
+    let selected = []
+    for row in processor.data {
+        let new_row = []
+        for i in indices {
+            new_row.push(row[i])
+        }
+        selected.push(new_row)
+    }
+    
+    return DataProcessor {
+        data: selected,
+        headers: columns
+    }
+}
+
+fn group_by(processor: DataProcessor, column: string) -> dict[string, DataProcessor] {
+    let col_index = processor.headers.index_of(column).unwrap()
+    let groups = dict()
+    
+    for row in processor.data {
+        let key = row[col_index]
+        if !groups.contains(key) {
+            groups[key] = DataProcessor {
+                data: [],
+                headers: processor.headers
+            }
+        }
+        groups[key].data.push(row)
+    }
+    
+    return groups
+}
+
+fn aggregate(processor: DataProcessor, column: string, op: string) -> float {
+    let col_index = processor.headers.index_of(column).unwrap()
+    let values = []
+    
+    for row in processor.data {
+        values.push(row[col_index].to_float())
+    }
+    
+    match op {
+        "sum" => return values.reduce((a, b) => a + b, 0.0)
+        "avg" => return values.reduce((a, b) => a + b, 0.0) / values.len
+        "min" => return values.reduce((a, b) => if a < b { a } else { b }, values[0])
+        "max" => return values.reduce((a, b) => if a > b { a } else { b }, values[0])
+        "count" => return values.len.to_float()
+        _ => return 0.0
+    }
+}
+
+fn sort(processor: DataProcessor, column: string, ascending: bool) -> DataProcessor {
+    let col_index = processor.headers.index_of(column).unwrap()
+    
+    let sorted = processor.data.sort((a, b) => {
+        let a_val = a[col_index].to_float()
+        let b_val = b[col_index].to_float()
+        if ascending {
+            return a_val - b_val
+        } else {
+            return b_val - a_val
+        }
+    })
+    
+    return DataProcessor {
+        data: sorted,
+        headers: processor.headers
+    }
+}
+
+fn statistics(processor: DataProcessor, column: string) -> dict[string, float] {
+    let col_index = processor.headers.index_of(column).unwrap()
+    let values = []
+    
+    for row in processor.data {
+        values.push(row[col_index].to_float())
+    }
+    
+    let sum = values.reduce((a, b) => a + b, 0.0)
+    let avg = sum / values.len
+    let min = values.reduce((a, b) => if a < b { a } else { b }, values[0])
+    let max = values.reduce((a, b) => if a > b { a } else { b }, values[0])
+    
+    let variance = values.reduce((a, b) => a + (b - avg) * (b - avg), 0.0) / values.len
+    let std_dev = math.sqrt(variance)
+    
+    return dict([
+        ("count", values.len.to_float()),
+        ("sum", sum),
+        ("avg", avg),
+        ("min", min),
+        ("max", max),
+        ("std_dev", std_dev)
+    ])
+}
+
+fn to_json(processor: DataProcessor) -> json.Value {
+    let objects = []
+    
+    for row in processor.data {
+        let pairs = []
+        for i in 0..processor.headers.len {
+            pairs.push((processor.headers[i], json.string(row[i])))
+        }
+        objects.push(json.object(pairs))
+    }
+    
+    return json.array(objects)
+}
+
+fn save_csv(processor: DataProcessor, path: string) {
+    let writer = csv.csv_writer(",")
+    csv.write_header(writer, processor.headers)
+    for row in processor.data {
+        csv.write_row(writer, row)
+    }
+    csv.save(writer, path)
+}
+
+fn main() {
+    println("=== Data Processing Example ===")
+    
+    // Create sample data
+    let sample_data = "name,age,salary,department\nAlice,30,50000,Engineering\nBob,25,45000,Sales\nCharlie,35,60000,Engineering\nDiana,28,52000,Marketing\nEve,32,58000,Engineering"
+    
+    fs.write_file("employees.csv", sample_data)
+    
+    // Load data
+    let processor = load_csv("employees.csv")
+    println("Loaded " + processor.data.len.to_string() + " rows")
+    
+    // Filter by department
+    let engineering = filter(processor, "department", "Engineering")
+    println("Engineering: " + engineering.data.len.to_string() + " employees")
+    
+    // Calculate statistics
+    let salary_stats = statistics(engineering, "salary")
+    println("Salary stats:")
+    println("  Average: $" + salary_stats["avg"].to_string())
+    println("  Min: $" + salary_stats["min"].to_string())
+    println("  Max: $" + salary_stats["max"].to_string())
+    
+    // Group by department
+    let groups = group_by(processor, "department")
+    println("\nBy department:")
+    for (dept, group) in groups {
+        let avg_salary = aggregate(group, "salary", "avg")
+        println("  " + dept + ": $" + avg_salary.to_string())
+    }
+    
+    // Sort by salary
+    let sorted = sort(processor, "salary", false)
+    println("\nTop salaries:")
+    for i in 0..3 {
+        println("  " + sorted.data[i][0] + ": $" + sorted.data[i][2])
+    }
+    
+    // Export to JSON
+    let json_data = to_json(processor)
+    fs.write_file("employees.json", json.stringify_pretty(json_data).unwrap())
+    println("\nExported to employees.json")
+    
+    // Clean up
+    fs.delete_file("employees.csv")
+}

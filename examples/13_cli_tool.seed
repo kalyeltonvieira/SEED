@@ -1,0 +1,236 @@
+module cli_tool
+
+import stdlib.io
+import stdlib.cli
+import stdlib.fs
+import stdlib.json
+
+/// Ferramenta CLI completa com subcomandos e argumentos
+
+type CLICommand = {
+    name: string
+    description: string
+    fn: fn([string])
+    args: [cli.ArgSpec]
+}
+
+type CLIApp = {
+    name: string
+    version: string
+    description: string
+    commands: [CLICommand]
+}
+
+fn cli_app(name: string, version: string, description: string) -> CLIApp {
+    return CLIApp {
+        name: name,
+        version: version,
+        description: description,
+        commands: []
+    }
+}
+
+fn add_command(app: CLIApp, cmd: CLICommand) {
+    app.commands.push(cmd)
+}
+
+fn run(app: CLIApp, args: [string]) {
+    if args.len == 0 {
+        print_help(app)
+        return
+    }
+    
+    let cmd_name = args[0]
+    let cmd_args = args.slice(1, args.len)
+    
+    let cmd = app.commands.find(c => c.name == cmd_name)
+    
+    if cmd != null {
+        cmd.fn(cmd_args)
+    } else {
+        println("Unknown command: " + cmd_name)
+        print_help(app)
+    }
+}
+
+fn print_help(app: CLIApp) {
+    println(app.name + " v" + app.version)
+    println(app.description)
+    println("")
+    println("Usage: " + app.name + " <command> [options]")
+    println("")
+    println("Commands:")
+    for cmd in app.commands {
+        println("  " + cmd.name.pad_right(15) + " " + cmd.description)
+    }
+}
+
+// Example CLI tool: File manager
+fn main() {
+    let app = cli_app("seedfile", "1.0.0", "SEED File Manager")
+    
+    add_command(app, CLICommand {
+        name: "list",
+        description: "List files in directory",
+        fn: fn(args: [string]) {
+            let path = if args.len > 0 { args[0] } else { "." }
+            let files = fs.list_dir(path)
+            
+            println("Files in " + path + ":")
+            for file in files {
+                let meta = fs.metadata(path + "\\" + file)
+                let type_str = if meta.is_dir { "[DIR]" } else { "[FILE]" }
+                println("  " + type_str + " " + file + " (" + meta.size.to_string() + " bytes)")
+            }
+        },
+        args: []
+    })
+    
+    add_command(app, CLICommand {
+        name: "info",
+        description: "Show file information",
+        fn: fn(args: [string]) {
+            if args.len == 0 {
+                println("Usage: info <file>")
+                return
+            }
+            
+            let path = args[0]
+            let meta = fs.metadata(path)
+            
+            println("File: " + path)
+            println("Size: " + meta.size.to_string() + " bytes")
+            println("Type: " + if meta.is_dir { "Directory" } else { "File" })
+            println("Modified: " + meta.modified)
+        },
+        args: []
+    })
+    
+    add_command(app, CLICommand {
+        name: "copy",
+        description: "Copy file",
+        fn: fn(args: [string]) {
+            if args.len < 2 {
+                println("Usage: copy <src> <dst>")
+                return
+            }
+            
+            fs.copy(args[0], args[1])
+            println("Copied " + args[0] + " to " + args[1])
+        },
+        args: []
+    })
+    
+    add_command(app, CLICommand {
+        name: "move",
+        description: "Move file",
+        fn: fn(args: [string]) {
+            if args.len < 2 {
+                println("Usage: move <src> <dst>")
+                return
+            }
+            
+            fs.move(args[0], args[1])
+            println("Moved " + args[0] + " to " + args[1])
+        },
+        args: []
+    })
+    
+    add_command(app, CLICommand {
+        name: "delete",
+        description: "Delete file",
+        fn: fn(args: [string]) {
+            if args.len == 0 {
+                println("Usage: delete <file>")
+                return
+            }
+            
+            if cli.confirm("Delete " + args[0] + "?") {
+                fs.delete_file(args[0])
+                println("Deleted " + args[0])
+            } else {
+                println("Cancelled")
+            }
+        },
+        args: []
+    })
+    
+    add_command(app, CLICommand {
+        name: "mkdir",
+        description: "Create directory",
+        fn: fn(args: [string]) {
+            if args.len == 0 {
+                println("Usage: mkdir <path>")
+                return
+            }
+            
+            fs.create_dir(args[0])
+            println("Created directory: " + args[0])
+        },
+        args: []
+    })
+    
+    add_command(app, CLICommand {
+        name: "search",
+        description: "Search for files",
+        fn: fn(args: [string]) {
+            if args.len == 0 {
+                println("Usage: search <pattern>")
+                return
+            }
+            
+            let pattern = args[0]
+            let files = fs.list_dir(".")
+            
+            println("Searching for: " + pattern)
+            for file in files {
+                if file.contains(pattern) {
+                    println("  " + file)
+                }
+            }
+        },
+        args: []
+    })
+    
+    add_command(app, CLICommand {
+        name: "cat",
+        description: "Print file contents",
+        fn: fn(args: [string]) {
+            if args.len == 0 {
+                println("Usage: cat <file>")
+                return
+            }
+            
+            let content = fs.read_file(args[0])
+            println(content)
+        },
+        args: []
+    })
+    
+    add_command(app, CLICommand {
+        name: "touch",
+        description: "Create empty file",
+        fn: fn(args: [string]) {
+            if args.len == 0 {
+                println("Usage: touch <file>")
+                return
+            }
+            
+            fs.write_file(args[0], "")
+            println("Created: " + args[0])
+        },
+        args: []
+    })
+    
+    add_command(app, CLICommand {
+        name: "help",
+        description: "Show help",
+        fn: fn(args: [string]) {
+            print_help(app)
+        },
+        args: []
+    })
+    
+    let cli_args = os.args().slice(1, os.args().len)
+    run(app, cli_args)
+}

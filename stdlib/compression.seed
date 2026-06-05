@@ -1,0 +1,252 @@
+module stdlib.compression
+
+/// Compressão: GZIP, ZLIB, deflate
+
+// GZIP
+fn gzip_compress(data: string) -> string {
+    let header = []
+    header.push(0x1F)  // ID1
+    header.push(0x8B)  // ID2
+    header.push(0x08)  // Compression method (deflate)
+    header.push(0x00)  // Flags
+    header.push(0x00)  // MTIME
+    header.push(0x00)
+    header.push(0x00)
+    header.push(0x00)
+    header.push(0x00)  // Extra flags
+    header.push(0xFF)  // OS (unknown)
+    
+    let compressed = deflate_compress(data)
+    let checksum = crc32(data)
+    
+    let trailer = []
+    trailer.push(checksum & 0xFF)
+    trailer.push((checksum >> 8) & 0xFF)
+    trailer.push((checksum >> 16) & 0xFF)
+    trailer.push((checksum >> 24) & 0xFF)
+    trailer.push(data.len & 0xFF)
+    trailer.push((data.len >> 8) & 0xFF)
+    trailer.push((data.len >> 16) & 0xFF)
+    trailer.push((data.len >> 24) & 0xFF)
+    
+    let result = ""
+    for b in header { result = result + b.to_char() }
+    result = result + compressed
+    for b in trailer { result = result + b.to_char() }
+    
+    return result
+}
+
+fn gzip_decompress(data: string) -> string {
+    // Skip header (10 bytes)
+    let compressed_start = 10
+    
+    // Find trailer (last 8 bytes)
+    let compressed_end = data.len - 8
+    
+    let compressed = data.substring(compressed_start, compressed_end)
+    return deflate_decompress(compressed)
+}
+
+// ZLIB
+fn zlib_compress(data: string) -> string {
+    let header = []
+    let compression_method = 0x08  // deflate
+    let window_size = 0x07  // 32K window
+    let checksum = 0x1F  // Adler-32
+    
+    header.push((compression_method << 4) | window_size)
+    header.push(checksum)
+    
+    let compressed = deflate_compress(data)
+    let adler = adler32(data)
+    
+    let trailer = []
+    trailer.push((adler >> 24) & 0xFF)
+    trailer.push((adler >> 16) & 0xFF)
+    trailer.push((adler >> 8) & 0xFF)
+    trailer.push(adler & 0xFF)
+    
+    let result = ""
+    for b in header { result = result + b.to_char() }
+    result = result + compressed
+    for b in trailer { result = result + b.to_char() }
+    
+    return result
+}
+
+fn zlib_decompress(data: string) -> string {
+    // Skip header (2 bytes)
+    let compressed_start = 2
+    
+    // Find trailer (last 4 bytes)
+    let compressed_end = data.len - 4
+    
+    let compressed = data.substring(compressed_start, compressed_end)
+    return deflate_decompress(compressed)
+}
+
+// Deflate (simplified implementation)
+fn deflate_compress(data: string) -> string {
+    // Simplified deflate - in real implementation, use proper DEFLATE algorithm
+    let result = ""
+    let i = 0
+    
+    while i < data.len {
+        let byte = data[i]
+        
+        if i + 3 < data.len && data[i] == data[i + 1] && data[i + 1] == data[i + 2] {
+            // RLE encoding for repeated bytes
+            let count = 1
+            while i + count < data.len && data[i + count] == byte && count < 255 {
+                count = count + 1
+            }
+            result = result + count.to_char()
+            result = result + byte
+            i = i + count
+        } else {
+            result = result + byte
+            i = i + 1
+        }
+    }
+    
+    return result
+}
+
+fn deflate_decompress(data: string) -> string {
+    // Simplified deflate decompression
+    let result = ""
+    let i = 0
+    
+    while i < data.len {
+        let byte = data[i]
+        
+        if byte > 0 && i + 1 < data.len {
+            // RLE encoded
+            let count = byte.to_int()
+            let value = data[i + 1]
+            for j in 0..count {
+                result = result + value
+            }
+            i = i + 2
+        } else {
+            result = result + byte
+            i = i + 1
+        }
+    }
+    
+    return result
+}
+
+// CRC32
+fn crc32(data: string) -> int {
+    let crc = 0xFFFFFFFF
+    let table = crc32_table()
+    
+    for byte in data {
+        let index = (crc ^ byte.to_int()) & 0xFF
+        crc = (crc >> 8) ^ table[index]
+    }
+    
+    return crc ^ 0xFFFFFFFF
+}
+
+fn crc32_table() -> [int] {
+    let table = []
+    
+    for i in 0..256 {
+        let crc = i
+        for j in 0..8 {
+            if crc & 1 != 0 {
+                crc = 0xEDB88320 ^ (crc >> 1)
+            } else {
+                crc = crc >> 1
+            }
+        }
+        table.push(crc)
+    }
+    
+    return table
+}
+
+// Adler-32
+fn adler32(data: string) -> int {
+    let a = 1
+    let b = 0
+    const MOD = 65521
+    
+    for byte in data {
+        a = (a + byte.to_int()) % MOD
+        b = (b + a) % MOD
+    }
+    
+    return (b << 16) | a
+}
+
+// Compression level
+type CompressionLevel = {
+    none: int
+    fast: int
+    default: int
+    best: int
+}
+
+const compression_level = CompressionLevel {
+    none: 0,
+    fast: 1,
+    default: 6,
+    best: 9
+}
+
+// Stream compression
+type Compressor = {
+    algorithm: string
+    level: int
+    buffer: string
+}
+
+fn compressor(algorithm: string, level: int) -> Compressor {
+    return Compressor {
+        algorithm: algorithm,
+        level: level,
+        buffer: ""
+    }
+}
+
+fn compress_write(c: Compressor, data: string) {
+    c.buffer = c.buffer + data
+}
+
+fn compress_finish(c: Compressor) -> string {
+    match c.algorithm {
+        "gzip" => return gzip_compress(c.buffer)
+        "zlib" => return zlib_compress(c.buffer)
+        "deflate" => return deflate_compress(c.buffer)
+        _ => return c.buffer
+    }
+}
+
+type Decompressor = {
+    algorithm: string
+    buffer: string
+}
+
+fn decompressor(algorithm: string) -> Decompressor {
+    return Decompressor {
+        algorithm: algorithm,
+        buffer: ""
+    }
+}
+
+fn decompress_write(d: Decompressor, data: string) {
+    d.buffer = d.buffer + data
+}
+
+fn decompress_finish(d: Decompressor) -> string {
+    match d.algorithm {
+        "gzip" => return gzip_decompress(d.buffer)
+        "zlib" => return zlib_decompress(d.buffer)
+        "deflate" => return deflate_decompress(d.buffer)
+        _ => return d.buffer
+    }
+}

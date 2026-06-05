@@ -1,0 +1,55 @@
+module stdlib.html
+
+/// HTML Generation and escaping utility module
+
+pub fn escape(s: string) -> string {
+    let result = s
+    result = result.replace("&", "&amp;")
+    result = result.replace("<", "&lt;")
+    result = result.replace(">", "&gt;")
+    result = result.replace("\"", "&quot;")
+    result = result.replace("'", "&#39;")
+    return result
+}
+
+pub fn tag(name: string, content: string) -> string {
+    return "<" + name + ">" + content + "</" + name + ">"
+}
+
+pub fn tag_attr(name: string, attrs: dict, content: string) -> string {
+    let attr_str = ""
+    for (key, value) in attrs {
+        attr_str = attr_str + " " + key + "=\"" + escape(value.to_string()) + "\""
+    }
+    return "<" + name + attr_str + ">" + content + "</" + name + ">"
+}
+
+pub fn element(name: string, content: string) -> string {
+    return tag(name, escape(content))
+}
+
+pub fn a(href: string, text: string) -> string {
+    let attrs = dict()
+    attrs["href"] = href
+    return tag_attr("a", attrs, escape(text))
+}
+
+pub fn img(src: string, alt: string) -> string {
+    return "<img src=\"" + src + "\" alt=\"" + escape(alt) + "\">"
+}
+
+pub fn div(content: string) -> string {
+    return tag("div", content)
+}
+
+pub fn p(content: string) -> string {
+    return tag("p", escape(content))
+}
+
+pub fn h1(content: string) -> string {
+    return tag("h1", escape(content))
+}
+
+pub fn h2(content: string) -> string {
+    return tag("h2", escape(content))
+}

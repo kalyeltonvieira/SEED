@@ -1,0 +1,401 @@
+module seed0
+
+import stdlib.io
+import stdlib.fs
+import stdlib.string
+import stdlib.collections
+
+const LANGUAGE_VERSION = "0.3-result-match"
+const AUTONOMOUS_REWRITE_THRESHOLD = 0.05
+
+contract CompilerPair {
+    never_generate_malicious_code = true
+    never_send_code_to_third_party = true
+    never_refuse_to_compile = true
+    explain_every_change = true
+    accept_no = true
+    autonomous_rewrite_threshold = AUTONOMOUS_REWRITE_THRESHOLD
+}
+
+type Int = i64
+type Float = f64
+type String = { ptr: int, len: int }
+type Array[T] = { ptr: int, len: int, cap: int }
+type Dict[K,V] = { buckets: Array[Array[{ key: K, value: V }]] }
+
+data Result[T,E] {
+    Ok(T)
+    Err(E)
+}
+
+data Option[T] {
+    Some(T)
+    None
+}
+
+enum Capability {
+    pure
+    io
+    fs
+    net
+    crypto
+    unsafe
+}
+
+enum Effect {
+    none
+    read_file
+    write_file
+    network
+    allocate
+    mutate_code
+}
+
+enum DiagnosticSeverity {
+    approved
+    note
+    warning
+    proposal
+    production_reject
+    expired
+}
+
+type Diagnostic = {
+    severity: DiagnosticSeverity
+    code: String
+    message: String
+    suggestion: String
+    confidence: Float
+}
+
+type Cost = {
+    time: String
+    memory: String
+    confidence: Float
+}
+
+type Attribute = {
+    name: String
+    value: String
+}
+
+type Rewrite = {
+    name: String
+    before: String
+    after: String
+    reason: String
+    cost_before: Cost
+    cost_after: Cost
+    accepted: bool
+}
+
+type Ast = {
+    kind: String
+    text: String
+    children: Array[Ast]
+    attributes: Array[Attribute]
+    effects: Array[Effect]
+    cost: Cost
+}
+
+type Freshness = {
+    created_at: String
+    expires_at: String
+    reason: String
+}
+
+enum TokenKind {
+    number
+    string
+    ident
+    symbol
+    eof
+}
+
+type Token = {
+    kind: TokenKind
+    text: String
+    line: Int
+    col: Int
+}
+
+enum Op {
+    alloc = 1
+    free = 2
+    read = 3
+    write = 4
+    cmp = 5
+    jmp = 6
+    syscall = 7
+}
+
+type Instruction = {
+    op: Op
+    dst: Int
+    a: Int
+    b: Int
+    imm: Int
+}
+
+type Program = {
+    source: String
+    tokens: Array[Token]
+    ast: Ast
+    bytecode: Array[Instruction]
+    diagnostics: Array[Diagnostic]
+    rewrites: Array[Rewrite]
+    effects: Array[Effect]
+    version: String
+}
+
+fn lex(source: String) -> Array[Token] {
+    let tokens = Array[Token]()
+    let i = 0
+    let line = 1
+    let col = 1
+    while i < source.len {
+        let c = source[i]
+        if c == '\n' {
+            i = i + 1
+            line = line + 1
+            col = 1
+        } else if is_space(c) {
+            i = i + 1
+            col = col + 1
+        } else if c == '/' && i + 1 < source.len && source[i + 1] == '/' {
+            while i < source.len && source[i] != '\n' { i = i + 1 }
+        } else if is_digit(c) {
+            let start = i
+            let start_col = col
+            while i < source.len && is_digit(source[i]) { i = i + 1 }
+            tokens.push(Token(number, source.slice(start, i), line, start_col))
+            col = col + (i - start)
+        } else if is_alpha(c) || c == '_' {
+            let start = i
+            let start_col = col
+            while i < source.len && (is_alpha_num(source[i]) || source[i] == '_') { i = i + 1 }
+            tokens.push(Token(ident, source.slice(start, i), line, start_col))
+            col = col + (i - start)
+        } else if c == '"' {
+            let start = i
+            let start_col = col
+            i = i + 1
+            while i < source.len && source[i] != '"' { i = i + 1 }
+            i = i + 1
+            tokens.push(Token(string, source.slice(start, i), line, start_col))
+            col = col + (i - start)
+        } else if i + 1 < source.len && is_two_char_symbol(source.slice(i, i + 2)) {
+            tokens.push(Token(symbol, source.slice(i, i + 2), line, col))
+            i = i + 2
+            col = col + 2
+        } else {
+            tokens.push(Token(symbol, source.slice(i, i + 1), line, col))
+            i = i + 1
+            col = col + 1
+        }
+    }
+    tokens.push(Token(eof, "", line, col))
+    return tokens
+}
+
+fn parse(tokens: Array[Token]) -> Ast {
+    // Seed0 ainda usa uma AST rasa: suficiente para analisar contratos,
+    // atributos e padroes ate seed1 substituir por parser completo.
+    let root = Ast("module", "", Array[Ast](), Array[Attribute](), Array[Effect](), Cost("unknown", "unknown", 0.10))
+    for t in tokens {
+        if t.kind != eof {
+            root.children.push(Ast("token", t.text, Array[Ast](), Array[Attribute](), Array[Effect](), Cost("O(1)", "O(1)", 0.20)))
+        }
+    }
+    return root
+}
+
+fn diagnostic(severity: DiagnosticSeverity, code: String, message: String, suggestion: String, confidence: Float) -> Diagnostic {
+    return Diagnostic(severity, code, message, suggestion, confidence)
+}
+
+fn has_keep(source: String) -> bool {
+    return contains_pattern(source, "#[keep]")
+}
+
+fn detects_bubble_sort(source: String) -> bool {
+    return contains_pattern(source, "for")
+        && contains_pattern(source, "for")
+        && (contains_pattern(source, "trocar") || contains_pattern(source, "swap"))
+        && contains_pattern(source, "[j+1]")
+}
+
+fn detects_naive_fib(source: String) -> bool {
+    return contains_pattern(source, "fib(n-1) + fib(n-2)")
+        || contains_pattern(source, "fib(n - 1) + fib(n - 2)")
+}
+
+fn detects_unbounded_select(source: String) -> bool {
+    return contains_pattern(source, "SELECT *") && !contains_pattern(source, "LIMIT")
+}
+
+fn detects_implicit_string_int(source: String) -> bool {
+    return contains_pattern(source, "string") && contains_pattern(source, "int") && contains_pattern(source, "+")
+}
+
+fn detects_non_exhaustive_match(source: String) -> bool {
+    if !contains_pattern(source, "match ") { return false }
+    let has_result_shape = contains_pattern(source, "Result[") || contains_pattern(source, "Ok(") || contains_pattern(source, "Err(")
+    let has_option_shape = contains_pattern(source, "Option[") || contains_pattern(source, "Some(") || contains_pattern(source, "None")
+    if has_result_shape {
+        return !(contains_pattern(source, "Ok(") && contains_pattern(source, "Err(")) && !contains_pattern(source, "_ =>")
+    }
+    if has_option_shape {
+        return !(contains_pattern(source, "Some(") && contains_pattern(source, "None")) && !contains_pattern(source, "_ =>")
+    }
+    return false
+}
+
+fn detects_unchecked_result(source: String) -> bool {
+    let has_fallible_call = contains_pattern(source, "sql_query(")
+        || contains_pattern(source, "fs.read_text(")
+        || contains_pattern(source, "parse_")
+    let mentions_fallible_shape = contains_pattern(source, "Result[")
+        || contains_pattern(source, "Option[")
+    if !has_fallible_call && !mentions_fallible_shape { return false }
+    if contains_pattern(source, "?") { return false }
+    if contains_pattern(source, "match ") { return false }
+    if has_fallible_call { return true }
+    if contains_pattern(source, "return Ok(") || contains_pattern(source, "return Err(") { return false }
+    return true
+}
+
+fn infer_effects(source: String) -> Array[Effect] {
+    let effects = Array[Effect]()
+    if contains_pattern(source, "print") { effects.push(Effect.write_file) }
+    if contains_pattern(source, "fs.") { effects.push(Effect.read_file); effects.push(Effect.write_file) }
+    if contains_pattern(source, "net.") || contains_pattern(source, "http") { effects.push(Effect.network) }
+    if contains_pattern(source, "mutator.") || contains_pattern(source, "dream") { effects.push(Effect.mutate_code) }
+    if contains_pattern(source, "Array[") || contains_pattern(source, "alloc") { effects.push(Effect.allocate) }
+    if effects.len == 0 { effects.push(Effect.none) }
+    return effects.unique()
+}
+
+fn analyze(program: Program) -> Program {
+    let p = program
+    p.effects = infer_effects(p.source)
+    if detects_bubble_sort(p.source) {
+        if has_keep(p.source) {
+            p.diagnostics.push(diagnostic(
+                DiagnosticSeverity.warning,
+                "SEED001",
+                "Bubble sort preservado por #[keep].",
+                "A SEED vai compilar, mas marcara a funcao como custo O(n^2).",
+                0.95
+            ))
+        } else {
+            p.diagnostics.push(diagnostic(
+                DiagnosticSeverity.production_reject,
+                "SEED001",
+                "Bubble sort O(n^2) detectado em codigo de producao.",
+                "Use sort.timsort ou aceite a reescrita proposta pelo seed1.",
+                0.96
+            ))
+        }
+    }
+    if detects_naive_fib(p.source) {
+        p.diagnostics.push(diagnostic(
+            DiagnosticSeverity.proposal,
+            "SEED002",
+            "Fibonacci recursivo ingenuo O(2^n).",
+            "Trocar por exponenciacao de matriz O(log n) ou lookup table O(1).",
+            0.98
+        ))
+    }
+    if detects_unbounded_select(p.source) {
+        p.diagnostics.push(diagnostic(
+            DiagnosticSeverity.expired,
+            "SEED003",
+            "Consulta SELECT * sem limite envelhece mal quando os dados crescem.",
+            "Adicionar paginacao, cache e campo #[expires].",
+            0.90
+        ))
+    }
+    if detects_implicit_string_int(p.source) {
+        p.diagnostics.push(diagnostic(
+            DiagnosticSeverity.warning,
+            "SEED004",
+            "Conversao implicita entre string e int precisa ser explicada.",
+            "A SEED aceita to_string(int), mas recomenda interpolacao: \"{valor}\".",
+            0.70
+        ))
+    }
+    if detects_non_exhaustive_match(p.source) {
+        p.diagnostics.push(diagnostic(
+            DiagnosticSeverity.warning,
+            "SEED005",
+            "match nao cobre todas as variantes conhecidas.",
+            "Adicionar os ramos faltantes ou usar _ => com justificativa explicita.",
+            0.91
+        ))
+    }
+    if detects_unchecked_result(p.source) {
+        p.diagnostics.push(diagnostic(
+            DiagnosticSeverity.warning,
+            "SEED006",
+            "Resultado falhavel foi usado sem match nem operador ?.",
+            "Tratar Ok/Err explicitamente ou propagar a falha com ?.",
+            0.88
+        ))
+    }
+    if p.diagnostics.len == 0 {
+        p.diagnostics.push(diagnostic(
+            DiagnosticSeverity.approved,
+            "SEED000",
+            "Programa aprovado. Nada critico a negociar.",
+            "",
+            1.0
+        ))
+    }
+    return p
+}
+
+fn lower(ast: Ast) -> Ast {
+    let lowered = ast
+    lowered.cost = Cost("linear in token count", "linear in token count", 0.50)
+    return lowered
+}
+
+fn compile_to_7(program: Program) -> Array[Instruction] {
+    let out = Array[Instruction]()
+    // Seed0 gera bytecode conservador. Seed1 otimiza e negocia reescritas.
+    // O contrato e que todo recurso acima das 7 primitivas se reduz a:
+    // ALLOC, FREE, READ, WRITE, CMP, JMP, SYSCALL.
+    out.push(Instruction(Op.alloc, 0, 0, 0, 4096))
+    out.push(Instruction(Op.write, 0, 0, 0, program.tokens.len))
+    out.push(Instruction(Op.cmp, 0, 0, 1, 0))
+    out.push(Instruction(Op.jmp, 0, 0, 0, 0))
+    out.push(Instruction(Op.free, 0, 0, 0, 0))
+    return out
+}
+
+fn compile(source: String) -> Program {
+    let tokens = lex(source)
+    let ast = lower(parse(tokens))
+    let p = Program(source, tokens, ast, Array[Instruction](), Array[Diagnostic](), Array[Rewrite](), Array[Effect](), LANGUAGE_VERSION)
+    let checked = analyze(p)
+    checked.bytecode = compile_to_7(checked)
+    return checked
+}
+
+fn main(args: Array[String]) -> Int {
+    if args.len == 0 {
+        print("SEED0: informe um arquivo .seed\n")
+        return 1
+    }
+    let src = fs.read_text(args[0])
+    let p = compile(src)
+    print("SEED0 " + LANGUAGE_VERSION + "\n")
+    for d in p.diagnostics {
+        print(d.code + ": " + d.message + "\n")
+        if d.suggestion.len > 0 { print("  sugestao: " + d.suggestion + "\n") }
+    }
+    io.write_bytecode("seed0.bin", p.bytecode)
+    print("SEED0: compilacao inicial concluida\n")
+    return 0
+}

@@ -1,0 +1,237 @@
+module async_example
+
+import stdlib.io
+import stdlib.concurrency
+import stdlib.net
+import stdlib.json
+import stdlib.time
+
+/// Exemplo de programação assíncrona com async/await
+
+async fn fetch_url(url: string) -> string {
+    println("Fetching: " + url)
+    
+    let response = net.get(url)
+    
+    match response {
+        Result[net.Response, net.Error].Ok(resp) => {
+            println("Got response: " + resp.status.to_string())
+            return resp.body
+        }
+        Result[net.Response, net.Error].Err(err) => {
+            println("Error: " + err.message)
+            return ""
+        }
+    }
+}
+
+async fn fetch_multiple(urls: [string]) -> [string] {
+    let futures = []
+    
+    for url in urls {
+        futures.push(async(fn() {
+            return await(fetch_url(url))
+        }))
+    }
+    
+    let results = []
+    for future in futures {
+        results.push(await(future))
+    }
+    
+    return results
+}
+
+async fn parallel_download(urls: [string]) -> [string] {
+    println("Downloading " + urls.len.to_string() + " URLs in parallel...")
+    
+    let futures = []
+    for url in urls {
+        futures.push(async(fetch_url, url))
+    }
+    
+    let results = wait_all(futures)
+    return results
+}
+
+async fn race_download(urls: [string]) -> string {
+    println("Racing " + urls.len.to_string() + " URLs...")
+    
+    let futures = []
+    for url in urls {
+        futures.push(async(fetch_url, url))
+    }
+    
+    let winner = race(futures)
+    return await(winner)
+}
+
+async fn sequential_download(urls: [string]) -> [string] {
+    println("Downloading " + urls.len.to_string() + " URLs sequentially...")
+    
+    let results = []
+    for url in urls {
+        let result = await(async(fetch_url, url))
+        results.push(result)
+    }
+    
+    return results
+}
+
+async fn process_with_timeout(url: string, timeout_ms: int) -> Option[string] {
+    let future = async(fetch_url, url)
+    
+    let start = time.now()
+    let result = await(future)
+    let elapsed = time.elapsed(start)
+    
+    if time.to_millis(elapsed) > timeout_ms {
+        println("Timeout!")
+        return Option[string].None
+    }
+    
+    return Option[string].Some(result)
+}
+
+async fn retry_operation(url: string, max_retries: int) -> string {
+    let attempts = 0
+    
+    while attempts < max_retries {
+        attempts = attempts + 1
+        println("Attempt " + attempts.to_string() + "...")
+        
+        let result = await(async(fetch_url, url))
+        
+        if result.len > 0 {
+            println("Success!")
+            return result
+        }
+        
+        if attempts < max_retries {
+            println("Retrying in 1 second...")
+            time.sleep(1000)
+        }
+    }
+    
+    println("Failed after " + max_retries.to_string() + " attempts")
+    return ""
+}
+
+async fn pipeline(urls: [string]) -> [json.Value] {
+    println("Pipeline: fetch -> parse -> transform")
+    
+    // Step 1: Fetch
+    let futures = []
+    for url in urls {
+        futures.push(async(fetch_url, url))
+    }
+    let bodies = wait_all(futures)
+    
+    // Step 2: Parse
+    let parsed = []
+    for body in bodies {
+        if body.len > 0 {
+            let data = json.parse(body)
+            match data {
+                Result[json.Value, json.Error].Ok(val) => parsed.push(val)
+                Result[json.Value, json.Error].Err(_) => {}
+            }
+        }
+    }
+    
+    // Step 3: Transform
+    let transformed = []
+    for item in parsed {
+        // Add timestamp
+        item.data["fetched_at"] = json.string(time.format(time.now(), "%Y-%m-%d %H:%M:%S"))
+        transformed.push(item)
+    }
+    
+    return transformed
+}
+
+async fn worker_pool(urls: [string], workers: int) -> [string] {
+    println("Using " + workers.to_string() + " workers")
+    
+    let channel = channel[string](10)
+    let results = channel[string](10)
+    
+    // Start workers
+    let worker_futures = []
+    for i in 0..workers {
+        worker_futures.push(async(fn() {
+            loop {
+                let url = receive(channel)
+                if url.is_empty() {
+                    break
+                }
+                let result = await(async(fetch_url, url))
+                send(results, result)
+            }
+        }))
+    }
+    
+    // Distribute work
+    for url in urls {
+        send(channel, url)
+    }
+    
+    // Signal workers to stop
+    for i in 0..workers {
+        send(channel, "")
+    }
+    
+    // Wait for workers
+    wait_all(worker_futures)
+    
+    // Collect results
+    let output = []
+    for i in 0..urls.len {
+        output.push(receive(results))
+    }
+    
+    return output
+}
+
+fn main() {
+    println("=== Async Programming Example ===")
+    println("")
+    
+    let urls = [
+        "https://api.github.com",
+        "https://api.github.com/users/octocat",
+        "https://api.github.com/repos"
+    ]
+    
+    // Example 1: Parallel download
+    println("--- Parallel Download ---")
+    let parallel_results = await(async(parallel_download, urls))
+    println("Got " + parallel_results.len.to_string() + " results")
+    
+    // Example 2: Sequential download
+    println("\n--- Sequential Download ---")
+    let sequential_results = await(async(sequential_download, urls))
+    println("Got " + sequential_results.len.to_string() + " results")
+    
+    // Example 3: Race
+    println("\n--- Race ---")
+    let winner = await(async(race_download, urls))
+    println("Winner length: " + winner.len.to_string())
+    
+    // Example 4: Retry
+    println("\n--- Retry ---")
+    let retry_result = await(async(retry_operation, "https://api.github.com", 3))
+    println("Result length: " + retry_result.len.to_string())
+    
+    // Example 5: Pipeline
+    println("\n--- Pipeline ---")
+    let pipeline_results = await(async(pipeline, urls))
+    println("Pipeline processed " + pipeline_results.len.to_string() + " items")
+    
+    // Example 6: Worker pool
+    println("\n--- Worker Pool ---")
+    let pool_results = await(async(worker_pool, urls, 2))
+    println("Pool processed " + pool_results.len.to_string() + " items")
+    
+    println("\nDone!")
+}

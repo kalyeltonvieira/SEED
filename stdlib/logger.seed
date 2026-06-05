@@ -1,0 +1,279 @@
+module stdlib.logger
+
+/// Sistema de Logging com níveis, formatação e outputs
+
+type LogLevel = {
+    name: string
+    value: int
+}
+
+const TRACE = LogLevel { name: "TRACE", value: 0 }
+const DEBUG = LogLevel { name: "DEBUG", value: 1 }
+const INFO = LogLevel { name: "INFO", value: 2 }
+const WARN = LogLevel { name: "WARN", value: 3 }
+const ERROR = LogLevel { name: "ERROR", value: 4 }
+const FATAL = LogLevel { name: "FATAL", value: 5 }
+
+type LogRecord = {
+    timestamp: time.Timestamp
+    level: LogLevel
+    message: string
+    module: string
+    line: int
+    fields: dict
+}
+
+type Logger = {
+    name: string
+    level: LogLevel
+    handlers: List[LogHandler]
+}
+
+type LogHandler = {
+    fn(LogRecord)
+}
+
+type ConsoleHandler = {}
+
+type FileHandler = {
+    path: string
+    file: int
+}
+
+type RotatingFileHandler = {
+    path: string
+    max_size: int
+    backup_count: int
+    current_size: int
+}
+
+// Logger creation
+fn logger(name: string) -> Logger {
+    let log = Logger {
+        name: name,
+        level: INFO,
+        handlers: List[LogHandler]()
+    }
+    
+    // Add default console handler
+    log.handlers.push(console_handler())
+    
+    return log
+}
+
+fn set_level(log: Logger, level: LogLevel) {
+    log.level = level
+}
+
+fn add_handler(log: Logger, handler: LogHandler) {
+    log.handlers.push(handler)
+}
+
+// Logging functions
+fn log(log: Logger, level: LogLevel, message: string) {
+    if level.value < log.level.value {
+        return
+    }
+    
+    let record = LogRecord {
+        timestamp: time.now(),
+        level: level,
+        message: message,
+        module: log.name,
+        line: 0,
+        fields: dict()
+    }
+    
+    for handler in log.handlers {
+        handler(record)
+    }
+}
+
+fn trace(log: Logger, message: string) {
+    log(log, TRACE, message)
+}
+
+fn debug(log: Logger, message: string) {
+    log(log, DEBUG, message)
+}
+
+fn info(log: Logger, message: string) {
+    log(log, INFO, message)
+}
+
+fn warn(log: Logger, message: string) {
+    log(log, WARN, message)
+}
+
+fn error(log: Logger, message: string) {
+    log(log, ERROR, message)
+}
+
+fn fatal(log: Logger, message: string) {
+    log(log, FATAL, message)
+}
+
+// Structured logging
+fn log_fields(log: Logger, level: LogLevel, message: string, fields: dict) {
+    if level.value < log.level.value {
+        return
+    }
+    
+    let record = LogRecord {
+        timestamp: time.now(),
+        level: level,
+        message: message,
+        module: log.name,
+        line: 0,
+        fields: fields
+    }
+    
+    for handler in log.handlers {
+        handler(record)
+    }
+}
+
+// Handlers
+fn console_handler() -> LogHandler {
+    return fn(record: LogRecord) {
+        let timestamp = time.format(record.timestamp, "%Y-%m-%d %H:%M:%S")
+        let level_color = get_level_color(record.level)
+        let level_padded = (record.level.name + " ").substring(0, 5)
+        
+        let message = cli.color(timestamp, "white") + " " + 
+                      cli.color(level_padded, level_color) + " " + 
+                      cli.color(record.module, "cyan") + " - " + 
+                      record.message
+        
+        if record.fields.len > 0 {
+            message = message + " " + format_fields(record.fields)
+        }
+        
+        println(message)
+    }
+}
+
+fn file_handler(path: string) -> LogHandler {
+    let file = fs.open(path, "a")
+    
+    return fn(record: LogRecord) {
+        let timestamp = time.format(record.timestamp, "%Y-%m-%d %H:%M:%S")
+        let message = timestamp + " " + record.level.name + " " + 
+                      record.module + " - " + record.message
+        
+        if record.fields.len > 0 {
+            message = message + " " + format_fields(record.fields)
+        }
+        
+        fs.write(file, message + "\n")
+    }
+}
+
+fn rotating_file_handler(path: string, max_size: int, backup_count: int) -> LogHandler {
+    let handler = RotatingFileHandler {
+        path: path,
+        max_size: max_size,
+        backup_count: backup_count,
+        current_size: 0
+    }
+    
+    if fs.file_exists(path) {
+        handler.current_size = fs.metadata(path).size
+    }
+    
+    return fn(record: LogRecord) {
+        let timestamp = time.format(record.timestamp, "%Y-%m-%d %H:%M:%S")
+        let message = timestamp + " " + record.level.name + " " + 
+                      record.module + " - " + record.message
+        
+        if record.fields.len > 0 {
+            message = message + " " + format_fields(record.fields)
+        }
+        
+        handler.current_size = handler.current_size + message.len()
+        
+        if handler.current_size > handler.max_size {
+            rotate(handler)
+            handler.current_size = message.len()
+        }
+        
+        fs.append_file(handler.path, message + "\n")
+    }
+}
+
+fn rotate(handler: RotatingFileHandler) {
+    // Delete oldest backup
+    let oldest = handler.path + "." + handler.backup_count.to_string()
+    if fs.file_exists(oldest) {
+        fs.delete_file(oldest)
+    }
+    
+    // Rotate backups
+    for i in handler.backup_count..1 {
+        let old = handler.path + "." + (i - 1).to_string()
+        let new = handler.path + "." + i.to_string()
+        if fs.file_exists(old) {
+            fs.move(old, new)
+        }
+    }
+    
+    // Move current to .1
+    fs.move(handler.path, handler.path + ".1")
+}
+
+// Formatting
+fn get_level_color(level: LogLevel) -> string {
+    match level.name {
+        "TRACE" => return "white"
+        "DEBUG" => return "cyan"
+        "INFO" => return "green"
+        "WARN" => return "yellow"
+        "ERROR" => return "red"
+        "FATAL" => return "magenta"
+        _ => return "white"
+    }
+}
+
+fn format_fields(fields: dict) -> string {
+    let parts = []
+    for (key, value) in fields {
+        parts.push(key + "=" + value.to_string())
+    }
+    return parts.join(" ")
+}
+
+// Global logger
+let root_logger = logger("root")
+
+fn set_global_level(level: LogLevel) {
+    set_level(root_logger, level)
+}
+
+fn log_message(level: LogLevel, message: string) {
+    log(root_logger, level, message)
+}
+
+// Convenience functions
+fn log_trace(message: string) {
+    trace(root_logger, message)
+}
+
+fn log_debug(message: string) {
+    debug(root_logger, message)
+}
+
+fn log_info(message: string) {
+    info(root_logger, message)
+}
+
+fn log_warn(message: string) {
+    warn(root_logger, message)
+}
+
+fn log_error(message: string) {
+    error(root_logger, message)
+}
+
+fn log_fatal(message: string) {
+    fatal(root_logger, message)
+}

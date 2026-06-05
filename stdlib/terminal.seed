@@ -1,0 +1,60 @@
+module stdlib.terminal
+
+/// Módulo de controle do terminal
+/// Manipulação de cores ANSI, cursor e tela
+
+pub fn clear() {
+    syscall.terminal_clear()
+}
+
+pub fn fg_color(code: int) -> string {
+    return "\033[38;5;" + code.to_string() + "m"
+}
+
+pub fn bg_color(code: int) -> string {
+    return "\033[48;5;" + code.to_string() + "m"
+}
+
+pub fn reset() -> string {
+    return "\033[0m"
+}
+
+pub fn bold() -> string { return "\033[1m" }
+pub fn dim() -> string { return "\033[2m" }
+pub fn italic() -> string { return "\033[3m" }
+pub fn underline() -> string { return "\033[4m" }
+pub fn blink() -> string { return "\033[5m" }
+pub fn reverse() -> string { return "\033[7m" }
+pub fn hidden() -> string { return "\033[8m" }
+
+pub fn rgb_fg(r: int, g: int, b: int) -> string {
+    return "\033[38;2;" + r.to_string() + ";" + g.to_string() + ";" + b.to_string() + "m"
+}
+
+pub fn rgb_bg(r: int, g: int, b: int) -> string {
+    return "\033[48;2;" + r.to_string() + ";" + g.to_string() + ";" + b.to_string() + "m"
+}
+
+pub fn cursor_up(n: int) -> string {
+    return "\033[" + n.to_string() + "A"
+}
+
+pub fn cursor_down(n: int) -> string {
+    return "\033[" + n.to_string() + "B"
+}
+
+pub fn cursor_forward(n: int) -> string {
+    return "\033[" + n.to_string() + "C"
+}
+
+pub fn cursor_back(n: int) -> string {
+    return "\033[" + n.to_string() + "D"
+}
+
+pub fn cursor_pos(row: int, col: int) -> string {
+    return "\033[" + row.to_string() + ";" + col.to_string() + "H"
+}
+
+pub fn clear_line() -> string {
+    return "\033[2K"
+}

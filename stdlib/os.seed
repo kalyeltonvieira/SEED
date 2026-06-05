@@ -1,0 +1,52 @@
+module stdlib.os
+
+/// Operating system module
+
+pub fn env(key: string) -> string {
+    let value = syscall.os_getenv(key)
+    return value
+}
+
+pub fn set_env(key: string, value: string) {
+    syscall.os_setenv(key, value)
+}
+
+pub fn args() -> [string] {
+    return syscall.os_args()
+}
+
+pub fn exit(code: int) {
+    syscall.os_exit(code)
+}
+
+pub fn cpu_count() -> int {
+    return syscall.os_cpu_count()
+}
+
+pub fn memory_used() -> int {
+    return syscall.os_memory_used()
+}
+
+pub fn memory_total() -> int {
+    return syscall.os_memory_total()
+}
+
+pub fn hostname() -> string {
+    return syscall.os_hostname()
+}
+
+pub fn username() -> string {
+    return syscall.os_username()
+}
+
+pub fn tmp_dir() -> string {
+    return syscall.os_tmp_dir()
+}
+
+pub fn sleep(ms: int) {
+    syscall.os_sleep(ms)
+}
+
+pub fn shell(cmd: string) -> string {
+    return syscall.os_shell(cmd)
+}

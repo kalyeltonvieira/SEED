@@ -1,0 +1,27 @@
+hello-world:
+  input = fn main(){ print("Hello World") }
+  expected = approved
+
+fibonacci-naive:
+  input = fn fib(n){ if n<=1{n}else{fib(n-1)+fib(n-2)} }
+  expected = warning: naive_fibonacci
+
+bubble-sort:
+  input = nested adjacent swap sort
+  expected = rejected-with-alternative
+
+keep-bubble-sort:
+  input = #[keep] nested adjacent swap sort
+  expected = warning-but-compile-original
+
+select-star-aging:
+  input = sql_query("SELECT * FROM usuarios")
+  expected = SEED003 + paginated-cache proposal
+
+implicit-string-int:
+  input = "Joao" + 30
+  expected = SEED004 + to_string negotiation
+
+genitor-sort:
+  input = genitor Ordenador with sorted property
+  expected = candidate population + property tests

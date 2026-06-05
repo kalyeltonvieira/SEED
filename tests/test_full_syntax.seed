@@ -1,0 +1,53 @@
+use std::io::{print, println}
+
+type Tarefa {
+    id: int,
+    titulo: string,
+    concluida: bool
+}
+
+impl Tarefa {
+    pub fn nova(id: int, titulo: string) -> Tarefa {
+        let mut t = Tarefa();
+        t.id = id;
+        t.titulo = titulo;
+        t.concluida = false;
+        return t;
+    }
+    
+    pub fn marcar(mut self) {
+        self.concluida = true;
+    }
+    
+    pub fn formatar(self) -> string {
+        let status = if self.concluida { string("✓") } else { string("○") };
+        return string("[") + status + "] " + self.titulo;
+    }
+}
+
+// Typo declaration without body
+type EmptyType {}
+
+// Impl declaration without body
+impl EmptyImpl {}
+
+fn main() {
+    let mut tarefas: [Tarefa] = [];
+    
+    let mut t1 = Tarefa::nova(1, "Aprender SEED");
+    let mut t2 = Tarefa::nova(2, "Criar um projeto");
+    
+    // Test match basic simulation (if-else translated from match is not yet fully implemented in parser, using basic methods for now to ensure compiler robustness)
+    let m = match empty_match {};
+    
+    t1.marcar();
+    tarefas.push_back(t1);
+    tarefas.push_back(t2);
+    
+    println("=== Lista de Tarefas ===");
+    for tarefa in tarefas {
+        println(tarefa.formatar());
+    }
+    
+    println("Test OK!");
+}

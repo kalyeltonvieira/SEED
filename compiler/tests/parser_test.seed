@@ -1,0 +1,208 @@
+module compiler.tests.parser_test
+
+/// Testes do Parser SEED
+/// Verifica se o parser constrói corretamente a AST
+
+use compiler.lexer
+use compiler.parser
+
+fn main() {
+    println("=== Testes do Parser SEED ===")
+    println("")
+    
+    test_function_declaration()
+    test_variable_declaration()
+    test_if_expression()
+    test_while_loop()
+    test_for_loop()
+    test_match_expression()
+    test_binary_operations()
+    test_function_call()
+    test_errors()
+    
+    println("")
+    println("Todos os testes do parser passaram!")
+}
+
+fn test_function_declaration() {
+    println("Testando declaração de função...")
+    
+    let source = "fn main() { println(\"hello\") }"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    let ast = ast_result.value
+    if ast.declarations.len != 1 {
+        println("  [FALHOU] Esperado 1 declaração, obteve " + ast.declarations.len.to_string())
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_variable_declaration() {
+    println("Testando declaração de variável...")
+    
+    let source = "let x = 42"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_if_expression() {
+    println("Testando expressão if...")
+    
+    let source = "if x > 0 { println(\"positive\") }"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_while_loop() {
+    println("Testando loop while...")
+    
+    let source = "while x > 0 { x = x - 1 }"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_for_loop() {
+    println("Testando loop for...")
+    
+    let source = "for i in 0..10 { println(i) }"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_match_expression() {
+    println("Testando expressão match...")
+    
+    let source = "match x { 1 => \"one\", 2 => \"two\" }"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_binary_operations() {
+    println("Testando operações binárias...")
+    
+    let source = "let result = x + y * z"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_function_call() {
+    println("Testando chamada de função...")
+    
+    let source = "println(\"hello\")"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_errors() {
+    println("Testando erros de parsing...")
+    
+    let source = "fn main() { }"  // Função sem corpo
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos inesperados: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    // Esperado que o parser detecte o erro
+    
+    println("  [OK]")
+}

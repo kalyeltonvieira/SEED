@@ -1,0 +1,5 @@
+generation 0 {
+    organism "sort.insertion" { fitness = 0.31 }
+    organism "sort.quicksort" { fitness = 0.74 }
+    organism "sort.timsort" { fitness = 0.88 }
+}

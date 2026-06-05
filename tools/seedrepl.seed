@@ -1,0 +1,231 @@
+module seedrepl
+
+import stdlib.io
+import stdlib.string
+import stdlib.cli
+import stdlib.math
+
+/// REPL (Read-Eval-Print Loop) for SEED
+
+type REPL = {
+    prompt: string
+    history: [string]
+    history_index: int
+    variables: dict
+    running: bool
+}
+
+fn repl() -> REPL {
+    return REPL {
+        prompt: "seed> ",
+        history: [],
+        history_index: 0,
+        variables: dict(),
+        running: true
+    }
+}
+
+fn start(r: REPL) {
+    println("SEED REPL v1.0")
+    println("Type 'help' for commands, 'exit' to quit")
+    println("")
+    
+    while r.running {
+        let input = read_line(r.prompt)
+        
+        if input.is_empty() {
+            continue
+        }
+        
+        r.history.push(input)
+        r.history_index = r.history.len
+        
+        let result = eval(r, input)
+        
+        if result != null {
+            println(result.to_string())
+        }
+    }
+}
+
+fn eval(r: REPL, input: string) -> any {
+    let trimmed = input.trim()
+    
+    // Commands
+    if trimmed == "exit" || trimmed == "quit" {
+        r.running = false
+        return null
+    }
+    
+    if trimmed == "help" {
+        print_help()
+        return null
+    }
+    
+    if trimmed == "clear" {
+        r.variables = dict()
+        println("Variables cleared")
+        return null
+    }
+    
+    if trimmed == "history" {
+        for i in 0..r.history.len {
+            println((i + 1).to_string() + ": " + r.history[i])
+        }
+        return null
+    }
+    
+    if trimmed == "vars" {
+        for (key, value) in r.variables {
+            println(key + " = " + value.to_string())
+        }
+        return null
+    }
+    
+    // Variable assignment
+    if trimmed.contains("=") && !trimmed.contains("==") {
+        let parts = trimmed.split("=")
+        let var_name = parts[0].trim()
+        let expr = parts[1].trim()
+        let value = eval_expr(r, expr)
+        r.variables[var_name] = value
+        return value
+    }
+    
+    // Expression evaluation
+    return eval_expr(r, trimmed)
+}
+
+fn eval_expr(r: REPL, expr: string) -> any {
+    // Check for variable reference
+    if r.variables.contains(expr) {
+        return r.variables[expr]
+    }
+    
+    // Number literals
+    if is_number(expr) {
+        if expr.contains(".") {
+            return expr.to_float()
+        }
+        return expr.to_int()
+    }
+    
+    // String literals
+    if expr.starts_with("\"") && expr.ends_with("\"") {
+        return expr.substring(1, expr.len() - 1)
+    }
+    
+    // Boolean literals
+    if expr == "true" {
+        return true
+    }
+    if expr == "false" {
+        return false
+    }
+    
+    // Math operations
+    if expr.contains("+") {
+        let parts = expr.split("+")
+        let left = eval_expr(r, parts[0].trim())
+        let right = eval_expr(r, parts[1].trim())
+        return left + right
+    }
+    
+    if expr.contains("-") && !expr.starts_with("-") {
+        let parts = expr.split("-")
+        let left = eval_expr(r, parts[0].trim())
+        let right = eval_expr(r, parts[1].trim())
+        return left - right
+    }
+    
+    if expr.contains("*") {
+        let parts = expr.split("*")
+        let left = eval_expr(r, parts[0].trim())
+        let right = eval_expr(r, parts[1].trim())
+        return left * right
+    }
+    
+    if expr.contains("/") {
+        let parts = expr.split("/")
+        let left = eval_expr(r, parts[0].trim())
+        let right = eval_expr(r, parts[1].trim())
+        return left / right
+    }
+    
+    // Math functions
+    if expr.starts_with("sin(") {
+        let arg = expr.substring(4, expr.len() - 1)
+        let value = eval_expr(r, arg)
+        return math.sin(value)
+    }
+    
+    if expr.starts_with("cos(") {
+        let arg = expr.substring(4, expr.len() - 1)
+        let value = eval_expr(r, arg)
+        return math.cos(value)
+    }
+    
+    if expr.starts_with("sqrt(") {
+        let arg = expr.substring(5, expr.len() - 1)
+        let value = eval_expr(r, arg)
+        return math.sqrt(value)
+    }
+    
+    // Array literals
+    if expr.starts_with("[") && expr.ends_with("]") {
+        let inner = expr.substring(1, expr.len() - 1)
+        let parts = inner.split(",")
+        let arr = []
+        for part in parts {
+            if !part.trim().is_empty() {
+                arr.push(eval_expr(r, part.trim()))
+            }
+        }
+        return arr
+    }
+    
+    return "Error: unknown expression"
+}
+
+fn is_number(s: string) -> bool {
+    try {
+        s.to_float()
+        return true
+    } catch {
+        return false
+    }
+}
+
+fn print_help() {
+    println("Available commands:")
+    println("  help     - Show this help")
+    println("  exit     - Exit REPL")
+    println("  clear    - Clear all variables")
+    println("  history  - Show command history")
+    println("  vars     - Show all variables")
+    println("")
+    println("Expressions:")
+    println("  1 + 2           - Arithmetic")
+    println("  x = 5           - Variable assignment")
+    println("  sin(3.14)       - Math functions")
+    println("  [1, 2, 3]       - Arrays")
+    println("  \"hello\"         - Strings")
+}
+
+fn read_line(prompt: string) -> string {
+    print(prompt)
+    return io.read_line()
+}
+
+fn main(args: [string]) {
+    let r = repl()
+    
+    // Custom prompt
+    for i in 0..args.len {
+        if args[i] == "--prompt" && i + 1 < args.len {
+            r.prompt = args[i + 1]
+        }
+    }
+    
+    start(r)
+}

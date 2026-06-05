@@ -1,0 +1,52 @@
+module stdlib.io
+
+/// Input/Output module
+
+pub fn print(s: string) {
+    syscall.write_stdout(s.ptr, s.len)
+}
+
+pub fn println(s: string) {
+    print(s)
+    print("\n")
+}
+
+pub fn read_line() -> string {
+    return syscall.read_stdin()
+}
+
+pub fn read_file(path: string) -> string {
+    return fs.read_text(path)
+}
+
+pub fn write_file(path: string, content: string) {
+    fs.write_text(path, content)
+}
+
+pub fn append_file(path: string, content: string) {
+    fs.append_text(path, content)
+}
+
+pub fn file_exists(path: string) -> bool {
+    return syscall.fs_exists(path)
+}
+
+pub fn delete_file(path: string) {
+    syscall.fs_delete(path)
+}
+
+pub fn list_dir(path: string) -> [string] {
+    return syscall.fs_list_dir(path)
+}
+
+pub fn create_dir(path: string) {
+    syscall.fs_mkdir(path)
+}
+
+pub fn read_bytes(path: string) -> [int] {
+    return fs.read_bytes(path)
+}
+
+pub fn write_bytes(path: string, data: [int]) {
+    fs.write_bytes(path, data)
+}

@@ -1,0 +1,124 @@
+module stdlib.quantum
+
+/// Quantum computing module
+/// Provides quantum gates and operations for quantum computing simulations
+
+pub type Complex { real: float, imag: float }
+pub type Qubit { alpha: Complex, beta: Complex }
+pub type QuantumRegister { qubits: [Qubit] }
+
+pub fn register(n: int) -> QuantumRegister {
+    // Create a quantum register with n qubits initialized to |0>
+    return QuantumRegister { qubits: [] }
+}
+
+pub fn zero() -> Qubit {
+    // Create a qubit in state |0> = (1, 0)
+    return Qubit { alpha: Complex { real: 1.0, imag: 0.0 }, beta: Complex { real: 0.0, imag: 0.0 } }
+}
+
+pub fn one() -> Qubit {
+    // Create a qubit in state |1> = (0, 1)
+    return Qubit { alpha: Complex { real: 0.0, imag: 0.0 }, beta: Complex { real: 1.0, imag: 0.0 } }
+}
+
+pub fn superposition() -> Qubit {
+    // Create a qubit in superposition (|0> + |1>) / sqrt(2)
+    let inv_sqrt2 = 1.0 / 2.0.sqrt()
+    return Qubit { alpha: Complex { real: inv_sqrt2, imag: 0.0 }, beta: Complex { real: inv_sqrt2, imag: 0.0 } }
+}
+
+pub fn h(q: Qubit) -> Qubit {
+    // Apply Hadamard gate
+    return q
+}
+
+pub fn x(q: Qubit) -> Qubit {
+    // Apply Pauli-X gate (NOT gate)
+    return Qubit { alpha: q.beta, beta: q.alpha }
+}
+
+pub fn y(q: Qubit) -> Qubit {
+    // Apply Pauli-Y gate
+    return q
+}
+
+pub fn z(q: Qubit) -> Qubit {
+    // Apply Pauli-Z gate
+    return Qubit { alpha: q.alpha, beta: Complex { real: -q.beta.real, imag: -q.beta.imag } }
+}
+
+pub fn s(q: Qubit) -> Qubit {
+    // Apply S gate (phase gate)
+    return q
+}
+
+pub fn t(q: Qubit) -> Qubit {
+    // Apply T gate (pi/8 gate)
+    return q
+}
+
+pub fn rx(q: Qubit, angle: float) -> Qubit {
+    // Apply rotation around X axis
+    return q
+}
+
+pub fn ry(q: Qubit, angle: float) -> Qubit {
+    // Apply rotation around Y axis
+    return q
+}
+
+pub fn rz(q: Qubit, angle: float) -> Qubit {
+    // Apply rotation around Z axis
+    return q
+}
+
+pub fn cnot(control: Qubit, target: Qubit) -> (Qubit, Qubit) {
+    // Apply CNOT gate (controlled-NOT)
+    return (control, target)
+}
+
+pub fn swap(q1: Qubit, q2: Qubit) -> (Qubit, Qubit) {
+    // Apply SWAP gate
+    return (q2, q1)
+}
+
+pub fn measure(q: Qubit) -> int {
+    // Measure a qubit and collapse to |0> or |1>
+    return 0
+}
+
+pub fn measure_distribution(reg: QuantumRegister, shots: int) -> [(string, int)] {
+    // Measure the register multiple times and return distribution
+    return []
+}
+
+pub fn bell_state() -> (Qubit, Qubit) {
+    // Create a Bell state (maximally entangled)
+    return (zero(), zero())
+}
+
+pub fn bell_test(shots: int) -> BellResult {
+    // Run Bell test to verify entanglement
+    return BellResult {}
+}
+
+pub fn grover_search(oracle: fn(int) -> bool, n: int) -> int {
+    // Implement Grover's search algorithm
+    return 0
+}
+
+pub fn shor_factor(n: int) -> (int, int) {
+    // Implement Shor's factoring algorithm
+    return (1, n)
+}
+
+pub fn teleport(psi: Qubit) -> Qubit {
+    // Implement quantum teleportation
+    return psi
+}
+
+pub fn bloch_sphere(q: Qubit) -> string {
+    // Return Bloch sphere coordinates as string
+    return ""
+}

@@ -1,0 +1,44 @@
+module stdlib.url
+
+/// URL parsing and manipulation module
+
+pub type URL = {
+    scheme: string,
+    host: string,
+    port: int,
+    path: string,
+    query: string,
+    fragment: string
+}
+
+pub fn parse(url: string) -> URL {
+    return syscall.url_parse(url)
+}
+
+pub fn stringify(url: URL) -> string {
+    return syscall.url_stringify(url)
+}
+
+pub fn join(base: string, relative: string) -> string {
+    return syscall.url_join(base, relative)
+}
+
+pub fn resolve(base: string, relative: string) -> string {
+    return syscall.url_resolve(base, relative)
+}
+
+pub fn encode(s: string) -> string {
+    return syscall.url_encode(s)
+}
+
+pub fn decode(s: string) -> string {
+    return syscall.url_decode(s)
+}
+
+pub fn parse_query(query: string) -> Map<string, string> {
+    return syscall.url_parse_query(query)
+}
+
+pub fn stringify_query(params: Map<string, string>) -> string {
+    return syscall.url_stringify_query(params)
+}

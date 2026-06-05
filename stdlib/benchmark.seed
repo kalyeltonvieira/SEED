@@ -1,0 +1,81 @@
+module stdlib.benchmark
+
+import stdlib.time
+import stdlib.io
+
+/// Benchmarking module
+/// Measures execution time and generates statistics
+
+pub type BenchmarkResult = {
+    name: string,
+    iterations: int,
+    total_time_ms: float,
+    avg_time_ms: float,
+    min_time_ms: float,
+    max_time_ms: float
+}
+
+pub fn benchmark(name: string, f: fn()) -> BenchmarkResult {
+    let iterations = 100
+    let total_ms = 0.0
+    let min_ms = 999999999.0
+    let max_ms = 0.0
+    
+    for i in 0..iterations {
+        let start = time.now()
+        f()
+        let dur = time.elapsed(start)
+        let ms = time.to_seconds(dur) * 1000.0
+        
+        total_ms = total_ms + ms
+        if ms < min_ms { min_ms = ms }
+        if ms > max_ms { max_ms = ms }
+    }
+    
+    let res = BenchmarkResult {
+        name: name,
+        iterations: iterations,
+        total_time_ms: total_ms,
+        avg_time_ms: total_ms / iterations.to_float(),
+        min_time_ms: min_ms,
+        max_time_ms: max_ms
+    }
+    
+    report_single(res)
+    return res
+}
+
+pub fn bench_compare(name1: string, f1: fn(), name2: string, f2: fn()) {
+    let res1 = benchmark(name1, f1)
+    let res2 = benchmark(name2, f2)
+    
+    io.println("--- Comparativo ---")
+    if res1.avg_time_ms < res2.avg_time_ms {
+        let diff = res2.avg_time_ms / res1.avg_time_ms
+        io.println(res1.name + " é " + diff.to_string() + "x mais rápido que " + res2.name)
+    } else {
+        let diff = res1.avg_time_ms / res2.avg_time_ms
+        io.println(res2.name + " é " + diff.to_string() + "x mais rápido que " + res1.name)
+    }
+}
+
+pub fn measure(f: fn()) -> int {
+    let start = time.now()
+    f()
+    let dur = time.elapsed(start)
+    return time.to_millis(dur)
+}
+
+fn report_single(res: BenchmarkResult) {
+    io.println("Benchmark: " + res.name)
+    io.println("  Iterações: " + res.iterations.to_string())
+    io.println("  Tempo médio: " + res.avg_time_ms.to_string() + " ms")
+    io.println("  Tempo mínimo: " + res.min_time_ms.to_string() + " ms")
+    io.println("  Tempo máximo: " + res.max_time_ms.to_string() + " ms")
+}
+
+pub fn report(results: [BenchmarkResult]) {
+    for res in results {
+        report_single(res)
+    }
+}

@@ -1,0 +1,249 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "SEED",
+  "scopeName": "source.seed",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#attributes"
+    },
+    {
+      "include": "#declarations"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#functions"
+    },
+    {
+      "include": "#variables"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.documentation.seed",
+          "match": "///.*$"
+        },
+        {
+          "name": "comment.line.double-slash.seed",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.seed",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.seed",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.seed",
+              "match": "\\\\([nrt\\\"\\\\]|x[0-9A-Fa-f]{2})"
+            },
+            {
+              "name": "constant.other.placeholder.seed",
+              "match": "\\{[A-Za-z_][A-Za-z0-9_\\.]*\\}"
+            }
+          ]
+        }
+      ]
+    },
+    "attributes": {
+      "patterns": [
+        {
+          "name": "meta.attribute.seed",
+          "begin": "#\\[",
+          "end": "\\]",
+          "patterns": [
+            {
+              "name": "entity.name.function.attribute.seed",
+              "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b"
+            },
+            {
+              "include": "#strings"
+            },
+            {
+              "include": "#numbers"
+            }
+          ]
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "name": "meta.function.seed",
+          "match": "\\b(fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.function.seed"
+            },
+            "2": {
+              "name": "entity.name.function.seed"
+            }
+          }
+        },
+        {
+          "name": "meta.type.declaration.seed",
+          "match": "\\b(type|enum|trait|impl|data|struct)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.type.seed"
+            },
+            "2": {
+              "name": "entity.name.type.seed"
+            }
+          }
+        },
+        {
+          "name": "meta.import.braced.seed",
+          "begin": "\\b(import|use)\\s+([A-Za-z_][A-Za-z0-9_\\.\\:]*)\\s*(?:::)?\\s*\\{",
+          "end": "\\}",
+          "beginCaptures": {
+            "1": {
+              "name": "keyword.control.import.seed"
+            },
+            "2": {
+              "name": "entity.name.namespace.seed"
+            }
+          },
+          "patterns": [
+            {
+              "name": "entity.name.function.imported.seed",
+              "match": "[A-Za-z_][A-Za-z0-9_]*"
+            }
+          ]
+        },
+        {
+          "name": "meta.module.seed",
+          "match": "\\b(module|import|use)\\s+([A-Za-z_][A-Za-z0-9_\\.\\:]*)(?:\\s+as\\s+([A-Za-z_][A-Za-z0-9_]*))?",
+          "captures": {
+            "1": {
+              "name": "keyword.control.import.seed"
+            },
+            "2": {
+              "name": "entity.name.namespace.seed"
+            },
+            "3": {
+              "name": "entity.name.namespace.alias.seed"
+            }
+          }
+        },
+        {
+          "name": "meta.variable.declaration.seed",
+          "match": "\\b(let|const)\\s+(?:(mut)\\s+)?([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "keyword.declaration.variable.seed"
+            },
+            "2": {
+              "name": "keyword.modifier.mut.seed"
+            },
+            "3": {
+              "name": "variable.other.definition.seed"
+            }
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.seed",
+          "match": "\\b(if|else|while|for|loop|in|return|break|continue|match|when|spawn|async|await|effect|contract|genitor|test|assert)\\b"
+        },
+        {
+          "name": "keyword.modifier.seed",
+          "match": "\\b(pub|priv|mut)\\b"
+        },
+        {
+          "name": "constant.language.boolean.seed",
+          "match": "\\b(true|false|null|none)\\b"
+        },
+        {
+          "name": "variable.language.self.seed",
+          "match": "\\bself\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.primitive.seed",
+          "match": "\\b(int|float|string|bool|char|void|Int|Float|String|Bool|Array|Dict|Unit|Result|Option|Error|i32|i64|u32|u64|f32|f64)\\b"
+        },
+        {
+          "name": "entity.name.type.seed",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.seed",
+          "match": "\\b0x[0-9A-Fa-f_]+\\b"
+        },
+        {
+          "name": "constant.numeric.float.seed",
+          "match": "\\b[0-9][0-9_]*\\.[0-9][0-9_]*\\b"
+        },
+        {
+          "name": "constant.numeric.integer.seed",
+          "match": "\\b[0-9][0-9_]*\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.seed",
+          "match": "(==|!=|<=|>=|=>|->|\\?|\\+|-|\\*|/|%|&&|\\|\\||!|=|<|>|\\.|::|\\.\\.)"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "name": "entity.name.function.call.seed",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
+        }
+      ]
+    },
+    "variables": {
+      "patterns": [
+        {
+          "name": "variable.parameter.seed",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*:)"
+        },
+        {
+          "name": "variable.other.seed",
+          "match": "\\b[a-z_][A-Za-z0-9_]*\\b"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,15 @@
+module programs.deadnet
+
+import stdlib.io
+import stdlib.crypto
+
+fn main() {
+    io.println("DeadNet em SEED: protocolo mesh descrito como programa evolutivo.")
+    io.println("Backend real depende de permissao explicita de rede/radio.")
+}
+
+genitor RouteOptimizer {
+    entrada: [Route]
+    saida: [Route]
+    propriedade: saida.custo_total <= entrada.custo_total
+}

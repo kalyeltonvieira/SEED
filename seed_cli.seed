@@ -1,0 +1,100 @@
+module seed_cli
+
+/// SEED CLI Wrapper
+/// Mostra tela de boas-vindas e gerencia comandos
+
+fn main(args: [string]) {
+    if args.len == 1 {
+        show_welcome()
+        show_repl_prompt()
+    } else {
+        let command = args[1]
+        match command {
+            "version" => show_version()
+            "--version" => show_version()
+            "-v" => show_version()
+            "help" => show_help()
+            "repl" => start_repl()
+            _ => show_usage()
+        }
+    }
+}
+
+fn show_welcome() {
+    println("SEED 1.0.0 - A Linguagem Viva")
+    println("================================")
+    println("Compilador:  D:\\SEED\\seed.exe")
+    println("Stdlib:      D:\\SEED\\stdlib\\")
+    println("Home:        D:\\SEED\\")
+    println("Versao:      1.0.0 (build 20240604)")
+    println("Autor:       SEED Community")
+    println("Licenca:     MIT")
+    println("")
+    println("Comandos disponiveis:")
+    println("  seed run <arquivo>      Compila e executa um arquivo .seed")
+    println("  seed build <projeto>    Compila um projeto inteiro")
+    println("  seed test               Roda os testes do projeto")
+    println("  seed repl               Abre o REPL interativo")
+    println("  seed fmt <arquivo>      Formata codigo .seed")
+    println("  seed lint <arquivo>     Analisa codigo em busca de problemas")
+    println("  seed docs <projeto>     Gera documentacao do projeto")
+    println("  seed new <nome>         Cria um novo projeto SEED")
+    println("  seed add <pacote>       Adiciona uma dependencia")
+    println("  seed update             Atualiza dependencias")
+    println("  seed clean              Limpa arquivos de build")
+    println("  seed version            Mostra esta tela")
+    println("  seed help               Mostra ajuda detalhada")
+    println("")
+    println("Digite \"seed help <comando>\" para ajuda especifica.")
+    println("Ou \"seed repl\" para entrar no modo interativo.")
+    println("")
+    println("Documentacao: https://seed-lang.org")
+    println("================================")
+}
+
+fn show_repl_prompt() {
+    println("")
+    println("Deseja entrar no REPL interativo? (s/n)")
+    let input = io.read_line()
+    if input == "s" || input == "S" || input == "y" || input == "Y" || input == "sim" || input == "yes" {
+        start_repl()
+    }
+}
+
+fn start_repl() {
+    println("")
+    println("Iniciando REPL...")
+    println("Para usar o REPL completo, execute:")
+    println("  .\\seed.exe tools\\seedrepl.seed")
+    println("")
+    println("Ou pressione Enter para sair.")
+    io.read_line()
+}
+
+fn show_version() {
+    println("SEED 1.0.0")
+}
+
+fn show_help() {
+    println("SEED HELP")
+    println("")
+    println("Comandos disponiveis:")
+    println("  seed run <arquivo>      Compila e executa um arquivo .seed")
+    println("  seed build <projeto>    Compila um projeto inteiro")
+    println("  seed test               Roda os testes do projeto")
+    println("  seed repl               Abre o REPL interativo")
+    println("  seed fmt <arquivo>      Formata codigo .seed")
+    println("  seed lint <arquivo>     Analisa codigo em busca de problemas")
+    println("  seed docs <projeto>     Gera documentacao do projeto")
+    println("  seed new <nome>         Cria um novo projeto SEED")
+    println("  seed add <pacote>       Adiciona uma dependencia")
+    println("  seed update             Atualiza dependencias")
+    println("  seed clean              Limpa arquivos de build")
+    println("  seed version            Mostra versao")
+    println("  seed help               Mostra esta ajuda")
+}
+
+fn show_usage() {
+    println("Uso: seed <comando> [argumentos]")
+    println("Digite 'seed help' para ajuda.")
+}

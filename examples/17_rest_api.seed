@@ -1,0 +1,355 @@
+module rest_api
+
+import stdlib.io
+import stdlib.net
+import stdlib.json
+import stdlib.db
+import stdlib.http
+import stdlib.crypto
+import stdlib.time
+
+/// REST API completa com CRUD, autenticação JWT, rate limiting
+
+type RestAPI = {
+    name: string
+    port: int
+    database: db.Database
+    routes: dict
+    middleware: [fn(net.Request) -> net.Response]
+    rate_limiter: http.RateLimiter
+}
+
+type Route = {
+    method: string
+    path: string
+    handler: fn(net.Request) -> net.Response
+    auth_required: bool
+}
+
+type JWTClaims = {
+    sub: string
+    exp: int
+    iat: int
+}
+
+fn rest_api(name: string, port: int) -> RestAPI {
+    return RestAPI {
+        name: name,
+        port: port,
+        database: null,
+        routes: dict(),
+        middleware: [],
+        rate_limiter: http.rate_limiter(100, 60)
+    }
+}
+
+fn init_db(api: RestAPI, path: string) {
+    api.database = db.sqlite_open(path).unwrap()
+    
+    api.database.execute("
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT UNIQUE,
+            password_hash TEXT,
+            created_at INTEGER
+        )
+    ", []).unwrap()
+    
+    api.database.execute("
+        CREATE TABLE IF NOT EXISTS items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            name TEXT,
+            description TEXT,
+            created_at INTEGER,
+            updated_at INTEGER,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    ", []).unwrap()
+}
+
+fn add_route(api: RestAPI, method: string, path: string, handler: fn(net.Request) -> net.Response, auth_required: bool) {
+    let key = method + ":" + path
+    api.routes[key] = Route {
+        method: method,
+        path: path,
+        handler: handler,
+        auth_required: auth_required
+    }
+}
+
+fn add_middleware(api: RestAPI, middleware: fn(net.Request) -> net.Response) {
+    api.middleware.push(middleware)
+}
+
+fn start(api: RestAPI) {
+    println("=== " + api.name + " ===")
+    println("Port: " + api.port.to_string())
+    println("Routes: " + api.routes.len.to_string())
+    println("")
+    
+    net.serve(api.port, fn(req: net.Request) -> net.Response {
+        return handle_request(api, req)
+    })
+}
+
+fn handle_request(api: RestAPI, req: net.Request) -> net.Response {
+    // Apply middleware
+    for mw in api.middleware {
+        req = mw(req)
+    }
+    
+    // Rate limiting
+    if !http.allow(api.rate_limiter) {
+        return error_response(429, "Too many requests")
+    }
+    
+    // Find route
+    let key = req.method + ":" + req.url.split("?")[0]
+    
+    if api.routes.contains(key) {
+        let route = api.routes[key]
+        
+        // Check auth
+        if route.auth_required {
+            let token = req.headers.get("Authorization", "").replace("Bearer ", "")
+            if !verify_jwt(token) {
+                return error_response(401, "Unauthorized")
+            }
+        }
+        
+        return route.handler(req)
+    }
+    
+    return error_response(404, "Not found")
+}
+
+// Auth handlers
+fn register(api: RestAPI, req: net.Request) -> net.Response {
+    let data = json.parse(req.body).unwrap()
+    
+    let email = data.data.get("email").unwrap().data
+    let password = data.data.get("password").unwrap().data
+    
+    let password_hash = crypto.bcrypt_hash(password)
+    
+    api.database.execute(
+        "INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)",
+        [email, password_hash, time.now().seconds]
+    ).unwrap()
+    
+    return json_response(201, json.object([
+        ("message", json.string("User created")),
+        ("email", json.string(email))
+    ]))
+}
+
+fn login(api: RestAPI, req: net.Request) -> net.Response {
+    let data = json.parse(req.body).unwrap()
+    
+    let email = data.data.get("email").unwrap().data
+    let password = data.data.get("password").unwrap().data
+    
+    let rows = api.database.query(
+        "SELECT id, password_hash FROM users WHERE email = ?",
+        [email]
+    ).unwrap()
+    
+    if rows.data.len == 0 {
+        return error_response(401, "Invalid credentials")
+    }
+    
+    let user = rows.data[0]
+    let password_hash = user[1]
+    
+    if !crypto.bcrypt_verify(password, password_hash) {
+        return error_response(401, "Invalid credentials")
+    }
+    
+    let token = generate_jwt(user[0].to_string())
+    
+    return json_response(200, json.object([
+        ("token", json.string(token)),
+        ("user_id", json.number(user[0]))
+    ]))
+}
+
+fn generate_jwt(user_id: string) -> string {
+    let header = json.object([
+        ("alg", json.string("HS256")),
+        ("typ", json.string("JWT"))
+    ])
+    
+    let now = time.now().seconds
+    let claims = json.object([
+        ("sub", json.string(user_id)),
+        ("iat", json.number(now)),
+        ("exp", json.number(now + 3600))
+    ])
+    
+    let header_b64 = encoding.base64_encode(json.stringify(header).unwrap())
+    let claims_b64 = encoding.base64_encode(json.stringify(claims).unwrap())
+    let signature = crypto.hmac_sha256(header_b64 + "." + claims_b64, "secret")
+    
+    return header_b64 + "." + claims_b64 + "." + signature
+}
+
+fn verify_jwt(token: string) -> bool {
+    let parts = token.split(".")
+    if parts.len != 3 {
+        return false
+    }
+    
+    let header_b64 = parts[0]
+    let claims_b64 = parts[1]
+    let signature = parts[2]
+    
+    let expected_signature = crypto.hmac_sha256(header_b64 + "." + claims_b64, "secret")
+    
+    return signature == expected_signature
+}
+
+// CRUD handlers
+fn get_items(api: RestAPI, req: net.Request) -> net.Response {
+    let user_id = get_user_id_from_token(req.headers.get("Authorization", ""))
+    
+    let rows = api.database.query(
+        "SELECT id, name, description, created_at, updated_at FROM items WHERE user_id = ?",
+        [user_id]
+    ).unwrap()
+    
+    let items = []
+    for row in rows.data {
+        items.push(json.object([
+            ("id", json.number(row[0])),
+            ("name", json.string(row[1])),
+            ("description", json.string(row[2])),
+            ("created_at", json.string(row[3])),
+            ("updated_at", json.string(row[4]))
+        ]))
+    }
+    
+    return json_response(200, json.array(items))
+}
+
+fn get_item(api: RestAPI, req: net.Request) -> net.Response {
+    let id = req.url.split("/")[2]
+    let user_id = get_user_id_from_token(req.headers.get("Authorization", ""))
+    
+    let rows = api.database.query(
+        "SELECT id, name, description, created_at, updated_at FROM items WHERE id = ? AND user_id = ?",
+        [id.to_int(), user_id]
+    ).unwrap()
+    
+    if rows.data.len == 0 {
+        return error_response(404, "Item not found")
+    }
+    
+    let row = rows.data[0]
+    return json_response(200, json.object([
+        ("id", json.number(row[0])),
+        ("name", json.string(row[1])),
+        ("description", json.string(row[2])),
+        ("created_at", json.string(row[3])),
+        ("updated_at", json.string(row[4]))
+    ]))
+}
+
+fn create_item(api: RestAPI, req: net.Request) -> net.Response {
+    let user_id = get_user_id_from_token(req.headers.get("Authorization", ""))
+    let data = json.parse(req.body).unwrap()
+    
+    let name = data.data.get("name").unwrap().data
+    let description = data.data.get("description", json.string("")).data
+    
+    api.database.execute(
+        "INSERT INTO items (user_id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        [user_id, name, description, time.now().seconds, time.now().seconds]
+    ).unwrap()
+    
+    return json_response(201, json.object([
+        ("message", json.string("Item created")),
+        ("name", json.string(name))
+    ]))
+}
+
+fn update_item(api: RestAPI, req: net.Request) -> net.Response {
+    let id = req.url.split("/")[2]
+    let user_id = get_user_id_from_token(req.headers.get("Authorization", ""))
+    let data = json.parse(req.body).unwrap()
+    
+    let name = data.data.get("name").unwrap().data
+    let description = data.data.get("description", json.string("")).data
+    
+    api.database.execute(
+        "UPDATE items SET name = ?, description = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+        [name, description, time.now().seconds, id.to_int(), user_id]
+    ).unwrap()
+    
+    return json_response(200, json.object([
+        ("message", json.string("Item updated"))
+    ]))
+}
+
+fn delete_item(api: RestAPI, req: net.Request) -> net.Response {
+    let id = req.url.split("/")[2]
+    let user_id = get_user_id_from_token(req.headers.get("Authorization", ""))
+    
+    api.database.execute(
+        "DELETE FROM items WHERE id = ? AND user_id = ?",
+        [id.to_int(), user_id]
+    ).unwrap()
+    
+    return json_response(200, json.object([
+        ("message", json.string("Item deleted"))
+    ]))
+}
+
+fn get_user_id_from_token(auth_header: string) -> int {
+    let token = auth_header.replace("Bearer ", "")
+    let claims_b64 = token.split(".")[1]
+    let claims_json = encoding.base64_decode(claims_b64)
+    let claims = json.parse(claims_json).unwrap()
+    return claims.data.get("sub", "0").data.to_int()
+}
+
+fn json_response(status: int, data: json.Value) -> net.Response {
+    return net.Response {
+        status: status,
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: json.stringify(data).unwrap()
+    }
+}
+
+fn error_response(status: int, message: string) -> net.Response {
+    return json_response(status, json.object([
+        ("error", json.string(message))
+    ]))
+}
+
+fn main() {
+    let api = rest_api("SEED REST API", 3000)
+    
+    init_db(api, "rest_api.db")
+    
+    // Auth routes
+    add_route(api, "POST", "/register", fn(req: net.Request) -> net.Response { register(api, req) }, false)
+    add_route(api, "POST", "/login", fn(req: net.Request) -> net.Response { login(api, req) }, false)
+    
+    // Item routes
+    add_route(api, "GET", "/items", fn(req: net.Request) -> net.Response { get_items(api, req) }, true)
+    add_route(api, "GET", "/items/:id", fn(req: net.Request) -> net.Response { get_item(api, req) }, true)
+    add_route(api, "POST", "/items", fn(req: net.Request) -> net.Response { create_item(api, req) }, true)
+    add_route(api, "PUT", "/items/:id", fn(req: net.Request) -> net.Response { update_item(api, req) }, true)
+    add_route(api, "DELETE", "/items/:id", fn(req: net.Request) -> net.Response { delete_item(api, req) }, true)
+    
+    // CORS middleware
+    add_middleware(api, fn(req: net.Request) -> net.Response {
+        req.headers["Access-Control-Allow-Origin"] = "*"
+        return req
+    })
+    
+    start(api)
+}

@@ -1,0 +1,60 @@
+module stdlib.hash
+
+/// Hash functions module
+
+pub fn sha256(data: string) -> string {
+    return syscall.hash_sha256(data)
+}
+
+pub fn sha512(data: string) -> string {
+    return syscall.hash_sha512(data)
+}
+
+pub fn sha1(data: string) -> string {
+    return syscall.hash_sha1(data)
+}
+
+pub fn md5(data: string) -> string {
+    return syscall.hash_md5(data)
+}
+
+pub fn sha3_256(data: string) -> string {
+    return syscall.hash_sha3_256(data)
+}
+
+pub fn sha3_512(data: string) -> string {
+    return syscall.hash_sha3_512(data)
+}
+
+pub fn blake2b(data: string) -> string {
+    return syscall.hash_blake2b(data)
+}
+
+pub fn blake2s(data: string) -> string {
+    return syscall.hash_blake2s(data)
+}
+
+pub fn hmac_sha256(key: string, data: string) -> string {
+    return syscall.hash_hmac_sha256(key, data)
+}
+
+pub fn hmac_sha512(key: string, data: string) -> string {
+    return syscall.hash_hmac_sha512(key, data)
+}
+
+pub fn hmac_sha1(key: string, data: string) -> string {
+    return syscall.hash_hmac_sha1(key, data)
+}
+
+pub fn hmac_md5(key: string, data: string) -> string {
+    return syscall.hash_hmac_md5(key, data)
+}
+
+pub fn hash_bytes(data: [int]) -> string {
+    return syscall.hash_bytes(data)
+}
+
+pub fn hash_file(path: string) -> string {
+    let data = io.read_file(path)
+    return sha256(data)
+}

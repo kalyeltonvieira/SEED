@@ -1,0 +1,97 @@
+module compiler.vm
+
+/// VM SEED - Máquina Virtual para executar bytecode
+
+type VM = {
+    stack: [any]
+    heap: dict
+    constants: [any]
+    bytecode: [int]
+    pc: int
+    running: bool
+}
+
+fn vm(constants: [any], bytecode: [int]) -> VM {
+    return VM {
+        stack: [],
+        heap: dict(),
+        constants: constants,
+        bytecode: bytecode,
+        pc: 0,
+        running: true
+    }
+}
+
+fn execute(vm: VM) -> any {
+    while vm.running && vm.pc < vm.bytecode.len {
+        let opcode = vm.bytecode[vm.pc]
+        let operand = vm.bytecode[vm.pc + 1]
+        
+        match opcode {
+            0 => vm_push(vm, operand)
+            1 => vm_pop(vm)
+            2 => vm_load(vm, operand)
+            3 => vm_store(vm, operand)
+            4 => vm_call(vm, operand)
+            5 => vm_jump(vm, operand)
+            6 => vm_return(vm)
+        }
+        
+        vm.pc = vm.pc + 2
+    }
+    
+    if vm.stack.len > 0 {
+        return vm.stack.pop()
+    }
+    
+    return null
+}
+
+fn vm_push(vm: VM, operand: int) {
+    if operand < vm.constants.len {
+        vm.stack.push(vm.constants[operand])
+    } else {
+        vm.stack.push(operand)
+    }
+}
+
+fn vm_pop(vm: VM) {
+    if vm.stack.len > 0 {
+        vm.stack.pop()
+    }
+}
+
+fn vm_load(vm: VM, operand: int) {
+    let name = vm.constants[operand]
+    if vm.heap.contains(name) {
+        vm.stack.push(vm.heap[name])
+    }
+}
+
+fn vm_store(vm: VM, operand: int) {
+    let name = vm.constants[operand]
+    if vm.stack.len > 0 {
+        vm.heap[name] = vm.stack.pop()
+    }
+}
+
+fn vm_call(vm: VM, operand: int) {
+    let args = []
+    for i in 0..operand {
+        args.push(vm.stack.pop())
+    }
+    
+    let func = vm.stack.pop()
+    
+    // Em uma implementação real, chamaria a função
+    // Para bootstrap, apenas simula
+    vm.stack.push(null)
+}
+
+fn vm_jump(vm: VM, operand: int) {
+    vm.pc = operand - 2
+}
+
+fn vm_return(vm: VM) {
+    vm.running = false
+}

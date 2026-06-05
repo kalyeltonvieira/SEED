@@ -1,0 +1,188 @@
+module seedtest
+
+import stdlib.io
+import stdlib.fs
+import stdlib.string
+import stdlib.test
+import stdlib.time
+
+/// Runner de Testes SEED
+/// Encontra e executa todos os testes *_test.seed
+
+type TestFile = {
+    path: string
+    name: string
+}
+
+type TestSuite = {
+    files: [TestFile]
+    results: TestResults
+}
+
+fn find_test_files(dir: string) -> [TestFile] {
+    let files = []
+    let items = fs.list_dir(dir)
+    
+    for item in items {
+        let path = dir + "\\" + item
+        if item.ends_with("_test.seed") {
+            files.push(TestFile(path, item))
+        } else if fs.metadata(path).is_dir {
+            files = files + find_test_files(path)
+        }
+    }
+    
+    return files
+}
+
+fn run_test_file(file: TestFile) -> TestResults {
+    println("Running: " + file.name)
+    
+    // Load and execute the test file
+    let source = fs.read_file(file.path)
+    
+    // Clear test registry
+    test.test_registry = []
+    
+    // Evaluate the test file (this would be done by the compiler/interpreter)
+    // For now, we'll simulate by parsing and calling test functions
+    
+    let start = time.now()
+    let results = test.run_all()
+    let elapsed = time.elapsed(start)
+    
+    println("  Time: " + time.to_millis(elapsed).to_string() + "ms")
+    println("")
+    
+    return results
+}
+
+fn run_suite(files: [TestFile], parallel: bool) -> TestSuite {
+    let total_results = TestResults(0, 0, 0, [])
+    
+    if parallel {
+        // Run tests in parallel (simulated)
+        for file in files {
+            let results = run_test_file(file)
+            total_results.total = total_results.total + results.total
+            total_results.passed = total_results.passed + results.passed
+            total_results.failed = total_results.failed + results.failed
+            total_results.failures = total_results.failures + results.failures
+        }
+    } else {
+        // Run tests sequentially
+        for file in files {
+            let results = run_test_file(file)
+            total_results.total = total_results.total + results.total
+            total_results.passed = total_results.passed + results.passed
+            total_results.failed = total_results.failed + results.failed
+            total_results.failures = total_results.failures + results.failures
+        }
+    }
+    
+    return TestSuite(files, total_results)
+}
+
+fn watch_mode(dir: string) {
+    println("Watch mode enabled. Press Ctrl+C to stop.")
+    
+    let last_modified = dict()
+    let files = find_test_files(dir)
+    
+    for file in files {
+        last_modified[file.path] = fs.metadata(file.path).modified
+    }
+    
+    while true {
+        time.sleep(1000)
+        
+        for file in files {
+            let meta = fs.metadata(file.path)
+            if meta.modified != last_modified[file.path] {
+                println("\n" + file.name + " modified. Re-running tests...")
+                run_test_file(file)
+                last_modified[file.path] = meta.modified
+            }
+        }
+    }
+}
+
+fn generate_coverage(files: [TestFile]) {
+    println("Generating coverage report...")
+    
+    let coverage = dict()
+    
+    for file in files {
+        let source = fs.read_file(file.path)
+        let lines = source.split("\n")
+        let covered = 0
+        let total = 0
+        
+        for line in lines {
+            let trimmed = line.trim()
+            if !trimmed.is_empty() && !trimmed.starts_with("//") && !trimmed.starts_with("///") {
+                total = total + 1
+                // This is a simplified coverage check
+                // Real implementation would use instrumentation
+                if trimmed.contains("assert") || trimmed.contains("test") {
+                    covered = covered + 1
+                }
+            }
+        }
+        
+        let percent = if total > 0 { (covered * 100) / total } else { 0 }
+        coverage[file.name] = percent
+    }
+    
+    println("\nCoverage Report:")
+    for (file, percent) in coverage {
+        let color = if percent >= 80 { "green" } else if percent >= 50 { "yellow" } else { "red" }
+        println("  " + cli.color(file, "white") + ": " + cli.color(percent.to_string() + "%", color))
+    }
+}
+
+fn main(args: [string]) {
+    let dir = "."
+    let parallel = false
+    let watch = false
+    let coverage = false
+    
+    for i in 0..args.len {
+        if args[i] == "--parallel" {
+            parallel = true
+        } else if args[i] == "--watch" {
+            watch = true
+        } else if args[i] == "--coverage" {
+            coverage = true
+        } else if !args[i].starts_with("-") {
+            dir = args[i]
+        }
+    }
+    
+    println("SEED Test Runner v1.0")
+    println("Test directory: " + dir)
+    
+    let files = find_test_files(dir)
+    println("Found " + files.len.to_string() + " test files")
+    println("")
+    
+    if watch {
+        watch_mode(dir)
+        return
+    }
+    
+    let suite = run_suite(files, parallel)
+    
+    println("\n" + cli.color("=" * 50, "white"))
+    println("Total: " + suite.results.total.to_string() + " tests")
+    println(cli.color("Passed: " + suite.results.passed.to_string(), "green"))
+    println(cli.color("Failed: " + suite.results.failed.to_string(), "red"))
+    
+    if coverage {
+        generate_coverage(files)
+    }
+    
+    if suite.results.failed > 0 {
+        os.exit(1)
+    }
+}

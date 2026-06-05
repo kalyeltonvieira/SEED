@@ -1,0 +1,219 @@
+module seeddocs
+
+import stdlib.io
+import stdlib.fs
+import stdlib.string
+import stdlib.json
+
+/// Gerador de Documentação SEED
+/// Extrai comentários /// e gera HTML
+
+type DocModule = {
+    name: string
+    description: string
+    functions: [DocFunction]
+}
+
+type DocFunction = {
+    name: string
+    signature: string
+    description: string
+    params: [DocParam]
+    returns: string
+    examples: [string]
+}
+
+type DocParam = {
+    name: string
+    type: string
+    description: string
+}
+
+fn extract_docs(source: string) -> DocModule {
+    let lines = source.split("\n")
+    let module_name = ""
+    let module_desc = ""
+    let functions = []
+    let current_fn = null
+    let current_desc = ""
+    let in_fn = false
+    
+    for line in lines {
+        let trimmed = line.trim()
+        
+        // Module declaration
+        if trimmed.starts_with("module ") {
+            module_name = trimmed.substring(7, trimmed.len())
+            continue
+        }
+        
+        // Documentation comment
+        if trimmed.starts_with("///") {
+            let doc_text = trimmed.substring(3, trimmed.len()).trim()
+            if current_desc.is_empty() {
+                current_desc = doc_text
+            } else {
+                current_desc = current_desc + " " + doc_text
+            }
+            continue
+        }
+        
+        // Function declaration
+        if trimmed.starts_with("fn ") {
+            if in_fn && current_fn != null {
+                current_fn.description = current_desc
+                functions.push(current_fn)
+            }
+            
+            let fn_line = trimmed.substring(3, trimmed.len())
+            let fn_name = fn_line.split("(")[0].trim()
+            let fn_sig = fn_line
+            
+            current_fn = DocFunction(fn_name, fn_sig, "", [], "", [])
+            current_desc = ""
+            in_fn = true
+            continue
+        }
+        
+        // End of function block
+        if in_fn && trimmed == "}" {
+            if current_fn != null {
+                current_fn.description = current_desc
+                functions.push(current_fn)
+            }
+            current_fn = null
+            current_desc = ""
+            in_fn = false
+        }
+    }
+    
+    return DocModule(module_name, module_desc, functions)
+}
+
+fn generate_html(module: DocModule) -> string {
+    let html = "<!DOCTYPE html>\n"
+    html = html + "<html>\n<head>\n"
+    html = html + "  <meta charset='UTF-8'>\n"
+    html = html + "  <title>" + module.name + " - SEED Documentation</title>\n"
+    html = html + "  <style>\n"
+    html = html + "    body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }\n"
+    html = html + "    h1 { color: #333; border-bottom: 2px solid #007acc; }\n"
+    html = html + "    h2 { color: #555; margin-top: 30px; }\n"
+    html = html +    "    .function { background: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 5px; }\n"
+    html = html + "    .signature { font-family: monospace; background: #e8e8e8; padding: 10px; border-radius: 3px; }\n"
+    html = html + "    .param { margin: 5px 0; }\n"
+    html = html + "    .example { background: #fff3cd; padding: 10px; margin: 10px 0; border-left: 4px solid #ffc107; }\n"
+    html = html + "  </style>\n"
+    html = html + "</head>\n<body>\n"
+    
+    html = html + "  <h1>" + module.name + "</h1>\n"
+    html = html + "  <p>" + module.description + "</p>\n"
+    
+    html = html + "  <h2>Functions</h2>\n"
+    for fn in module.functions {
+        html = html + "  <div class='function'>\n"
+        html = html + "    <h3>" + fn.name + "</h3>\n"
+        html = html + "    <div class='signature'>" + fn.signature + "</div>\n"
+        html = html + "    <p>" + fn.description + "</p>\n"
+        
+        if fn.params.len > 0 {
+            html = html + "    <h4>Parameters</h4>\n"
+            for param in fn.params {
+                html = html + "    <div class='param'>\n"
+                html = html + "      <strong>" + param.name + "</strong>: " + param.type + " - " + param.description + "\n"
+                html = html + "    </div>\n"
+            }
+        }
+        
+        if fn.returns.len > 0 {
+            html = html + "    <h4>Returns</h4>\n"
+            html = html + "    <p>" + fn.returns + "</p>\n"
+        }
+        
+        if fn.examples.len > 0 {
+            html = html + "    <h4>Examples</h4>\n"
+            for example in fn.examples {
+                html = html + "    <div class='example'><pre>" + example + "</pre></div>\n"
+            }
+        }
+        
+        html = html + "  </div>\n"
+    }
+    
+    html = html + "</body>\n</html>"
+    return html
+}
+
+fn generate_index(modules: [DocModule]) -> string {
+    let html = "<!DOCTYPE html>\n"
+    html = html + "<html>\n<head>\n"
+    html = html + "  <meta charset='UTF-8'>\n"
+    html = html + "  <title>SEED Standard Library - Documentation</title>\n"
+    html = html + "  <style>\n"
+    html = html + "    body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }\n"
+    html = html + "    h1 { color: #333; }\n"
+    html = html + "    .module { background: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 5px; }\n"
+    html = html + "    .module a { color: #007acc; text-decoration: none; }\n"
+    html = html + "    .module a:hover { text-decoration: underline; }\n"
+    html = html + "  </style>\n"
+    html = html + "</head>\n<body>\n"
+    
+    html = html + "  <h1>SEED Standard Library Documentation</h1>\n"
+    html = html + "  <div class='modules'>\n"
+    
+    for module in modules {
+        html = html + "    <div class='module'>\n"
+        html = html + "      <h2><a href='" + module.name + ".html'>" + module.name + "</a></h2>\n"
+        html = html + "      <p>" + module.description + "</p>\n"
+        html = html + "      <p><strong>Functions:</strong> " + module.functions.len.to_string() + "</p>\n"
+        html = html + "    </div>\n"
+    }
+    
+    html = html + "  </div>\n"
+    html = html + "</body>\n</html>"
+    return html
+}
+
+fn generate_docs(source_dir: string, output_dir: string) {
+    let modules = []
+    let files = fs.list_dir(source_dir)
+    
+    for file in files {
+        if file.ends_with(".seed") {
+            let path = source_dir + "\\" + file
+            let source = fs.read_file(path)
+            let module = extract_docs(source)
+            modules.push(module)
+            
+            let html = generate_html(module)
+            let output_path = output_dir + "\\" + module.name + ".html"
+            fs.write_file(output_path, html)
+            println("Generated: " + output_path)
+        }
+    }
+    
+    let index = generate_index(modules)
+    fs.write_file(output_dir + "\\index.html", index)
+    println("Generated: index.html")
+}
+
+fn main(args: [string]) {
+    let source_dir = "D:\\SEED\\stdlib"
+    let output_dir = "D:\\SEED\\docs"
+    
+    if args.len > 0 {
+        source_dir = args[0]
+    }
+    if args.len > 1 {
+        output_dir = args[1]
+    }
+    
+    println("SEED Documentation Generator v1.0")
+    println("Source: " + source_dir)
+    println("Output: " + output_dir)
+    
+    fs.create_dir(output_dir)
+    generate_docs(source_dir, output_dir)
+    
+    println("Documentation generated successfully!")
+}

@@ -1,0 +1,646 @@
+module compiler.typechecker
+
+import compiler.parser
+
+/// Verificador de Tipos para SEED
+/// Inferência Hindley-Milner, verificação de pattern matching, efeitos algébricos
+
+type Type = {
+    kind: string
+    name: string
+    params: [Type]
+}
+
+type TypeEnv = {
+    types: dict
+    effects: [string]
+}
+
+type TypeConstraint = {
+    kind: string
+    left: Type
+    right: Type
+}
+
+type TypeError = {
+    message: string
+    line: int
+    column: int
+    suggestion: string
+}
+
+// Tipos primitivos
+const TYPE_INT = Type { kind: "Int", name: "Int", params: [] }
+const TYPE_FLOAT = Type { kind: "Float", name: "Float", params: [] }
+const TYPE_STRING = Type { kind: "String", name: "String", params: [] }
+const TYPE_BOOL = Type { kind: "Bool", name: "Bool", params: [] }
+const TYPE_NULL = Type { kind: "Null", name: "Null", params: [] }
+const TYPE_UNIT = Type { kind: "Unit", name: "Unit", params: [] }
+const TYPE_ANY = Type { kind: "Any", name: "Any", params: [] }
+
+fn type_var(name: string) -> Type {
+    return Type { kind: "TypeVar", name: name, params: [] }
+}
+
+fn type_function(params: [Type], return_type: Type) -> Type {
+    return Type { kind: "Function", name: "->", params: params + [return_type] }
+}
+
+fn type_array(element_type: Type) -> Type {
+    return Type { kind: "Array", name: "[]", params: [element_type] }
+}
+
+fn type_named(name: string, params: [Type]) -> Type {
+    return Type { kind: "Named", name: name, params: params }
+}
+
+fn type_env() -> TypeEnv {
+    return TypeEnv {
+        types: dict([
+            ("Int", TYPE_INT),
+            ("Float", TYPE_FLOAT),
+            ("String", TYPE_STRING),
+            ("Bool", TYPE_BOOL),
+            ("null", TYPE_NULL),
+            ("true", TYPE_BOOL),
+            ("false", TYPE_BOOL)
+        ]),
+        effects: []
+    }
+}
+
+fn typechecker(ast: ASTNode) -> (Type, [TypeError]) {
+    let env = type_env()
+    let errors = []
+    
+    let result_type = infer(env, ast, errors)
+    
+    return (result_type, errors)
+}
+
+fn infer(env: TypeEnv, node: ASTNode, errors: [TypeError]) -> Type {
+    match node.type {
+        "Module" => {
+            for child in node.children {
+                infer(env, child, errors)
+            }
+            return TYPE_UNIT
+        }
+        "ModuleDeclaration" => {
+            return TYPE_UNIT
+        }
+        "Import" => {
+            return TYPE_UNIT
+        }
+        "Function" => {
+            let name = node.value
+            let params_node = node.children[0]
+            let return_type_node = node.children[1]
+            let body = node.children[2]
+            
+            // Infer parameter types
+            let param_types = []
+            for param in params_node.children {
+                let param_type = if param.children[0] != null {
+                    resolve_type(env, param.children[0])
+                } else {
+                    type_var("t" + crypto.uuid().substring(0, 8))
+                }
+                param_types.push(param_type)
+                env.types[param.value] = param_type
+            }
+            
+            // Infer return type
+            let return_type = if return_type_node != null {
+                resolve_type(env, return_type_node)
+            } else {
+                type_var("r" + crypto.uuid().substring(0, 8))
+            }
+            
+            // Infer body
+            let body_type = infer(env, body, errors)
+            
+            // Check return type
+            if !unify(return_type, body_type, env, errors) {
+                errors.push(TypeError {
+                    message: "Tipo de retorno incompatível",
+                    line: node.line,
+                    column: node.column,
+                    suggestion: "Verifique se o corpo da função retorna o tipo correto"
+                })
+            }
+            
+            let func_type = type_function(param_types, return_type)
+            env.types[name] = func_type
+            
+            return func_type
+        }
+        "LetDeclaration" | "ConstDeclaration" => {
+            let name = node.value
+            let decl_type = node.children[0]
+            let init = node.children[1]
+            
+            let init_type = infer(env, init, errors)
+            
+            if decl_type != null {
+                let expected_type = resolve_type(env, decl_type)
+                if !unify(expected_type, init_type, env, errors) {
+                    errors.push(TypeError {
+                        message: "Tipo incompatível na declaração",
+                        line: node.line,
+                        column: node.column,
+                        suggestion: "Verifique se o tipo declarado corresponde ao valor inicial"
+                    })
+                }
+                env.types[name] = expected_type
+            } else {
+                env.types[name] = init_type
+            }
+            
+            return TYPE_UNIT
+        }
+        "If" => {
+            let condition = node.children[0]
+            let then_branch = node.children[1]
+            let else_branch = node.children[2]
+            
+            let cond_type = infer(env, condition, errors)
+            if !unify(cond_type, TYPE_BOOL, env, errors) {
+                errors.push(TypeError {
+                    message: "Condição deve ser do tipo Bool",
+                    line: condition.line,
+                    column: condition.column,
+                    suggestion: "Use uma expressão booleana"
+                })
+            }
+            
+            let then_type = infer(env, then_branch, errors)
+            
+            if else_branch != null {
+                let else_type = infer(env, else_branch, errors)
+                if !unify(then_type, else_type, env, errors) {
+                    errors.push(TypeError {
+                        message: "Branches do if devem ter o mesmo tipo",
+                        line: node.line,
+                        column: node.column,
+                        suggestion: "Certifique-se que ambos os branches retornam o mesmo tipo"
+                    })
+                }
+            }
+            
+            return then_type
+        }
+        "For" => {
+            let pattern = node.children[0]
+            let iterable = node.children[1]
+            let body = node.children[2]
+            
+            let iterable_type = infer(env, iterable, errors)
+            
+            // Infer pattern type
+            let pattern_type = infer_pattern(env, pattern, iterable_type, errors)
+            
+            let body_type = infer(env, body, errors)
+            
+            return TYPE_UNIT
+        }
+        "While" => {
+            let condition = node.children[0]
+            let body = node.children[1]
+            
+            let cond_type = infer(env, condition, errors)
+            if !unify(cond_type, TYPE_BOOL, env, errors) {
+                errors.push(TypeError {
+                    message: "Condição do while deve ser do tipo Bool",
+                    line: condition.line,
+                    column: condition.column,
+                    suggestion: "Use uma expressão booleana"
+                })
+            }
+            
+            infer(env, body, errors)
+            
+            return TYPE_UNIT
+        }
+        "Return" => {
+            let value = node.children[0]
+            
+            if value != null {
+                return infer(env, value, errors)
+            }
+            
+            return TYPE_UNIT
+        }
+        "Match" => {
+            let value = node.children[0]
+            let value_type = infer(env, value, errors)
+            
+            let arms = node.children.slice(1, node.children.len)
+            let arm_types = []
+            
+            for arm in arms {
+                let pattern = arm.children[0]
+                let body = arm.children[1]
+                
+                let pattern_type = infer_pattern(env, pattern, value_type, errors)
+                let body_type = infer(env, body, errors)
+                arm_types.push(body_type)
+            }
+            
+            // Check that all arms return the same type
+            if arm_types.len > 0 {
+                let first_type = arm_types[0]
+                for arm_type in arm_types {
+                    if !unify(first_type, arm_type, env, errors) {
+                        errors.push(TypeError {
+                            message: "Todos os branches do match devem ter o mesmo tipo",
+                            line: node.line,
+                            column: node.column,
+                            suggestion: "Verifique se cada branch retorna o mesmo tipo"
+                        })
+                    }
+                }
+            }
+            
+            return arm_types[0]
+        }
+        "Block" => {
+            let last_type = TYPE_UNIT
+            for stmt in node.children {
+                last_type = infer(env, stmt, errors)
+            }
+            return last_type
+        }
+        "BinaryOp" => {
+            let left = node.children[0]
+            let right = node.children[1]
+            let op = node.value
+            
+            let left_type = infer(env, left, errors)
+            let right_type = infer(env, right, errors)
+            
+            match op {
+                "+" | "-" | "*" | "/" | "%" => {
+                    if !unify(left_type, right_type, env, errors) {
+                        errors.push(TypeError {
+                            message: "Operadores aritméticos requerem tipos numéricos iguais",
+                            line: node.line,
+                            column: node.column,
+                            suggestion: "Converta ambos os operandos para o mesmo tipo"
+                        })
+                    }
+                    return left_type
+                }
+                "==" | "!=" | "<" | ">" | "<=" | ">=" => {
+                    if !unify(left_type, right_type, env, errors) {
+                        errors.push(TypeError {
+                            message: "Operadores de comparação requerem tipos compatíveis",
+                            line: node.line,
+                            column: node.column,
+                            suggestion: "Converta ambos os operandos para o mesmo tipo"
+                        })
+                    }
+                    return TYPE_BOOL
+                }
+                "&&" | "||" => {
+                    if !unify(left_type, TYPE_BOOL, env, errors) || !unify(right_type, TYPE_BOOL, env, errors) {
+                        errors.push(TypeError {
+                            message: "Operadores lógicos requerem Bool",
+                            line: node.line,
+                            column: node.column,
+                            suggestion: "Use expressões booleanas"
+                        })
+                    }
+                    return TYPE_BOOL
+                }
+                _ => {
+                    return TYPE_ANY
+                }
+            }
+        }
+        "UnaryOp" => {
+            let operand = node.children[0]
+            let op = node.value
+            
+            let operand_type = infer(env, operand, errors)
+            
+            match op {
+                "!" => {
+                    if !unify(operand_type, TYPE_BOOL, env, errors) {
+                        errors.push(TypeError {
+                            message: "Operador ! requer Bool",
+                            line: node.line,
+                            column: node.column,
+                            suggestion: "Use uma expressão booleana"
+                        })
+                    }
+                    return TYPE_BOOL
+                }
+                "-" => {
+                    if !unify(operand_type, TYPE_INT, env, errors) && !unify(operand_type, TYPE_FLOAT, env, errors) {
+                        errors.push(TypeError {
+                            message: "Operador - requer tipo numérico",
+                            line: node.line,
+                            column: node.column,
+                            suggestion: "Use um número ou converta para Int/Float"
+                        })
+                    }
+                    return operand_type
+                }
+                "*" => {
+                    // Dereference - pointer type
+                    return TYPE_ANY
+                }
+                _ => {
+                    return operand_type
+                }
+            }
+        }
+        "Call" => {
+            let callee = node.children[0]
+            let args = node.children[1]
+            
+            let callee_type = infer(env, callee, errors)
+            
+            if callee_type.kind == "Function" {
+                let param_types = callee_type.params.slice(0, callee_type.params.len - 1)
+                let return_type = callee_type.params[callee_type.params.len - 1]
+                
+                if args.children.len != param_types.len {
+                    errors.push(TypeError {
+                        message: "Número de argumentos incorreto",
+                        line: node.line,
+                        column: node.column,
+                        suggestion: "Esperado " + param_types.len.to_string() + " argumentos"
+                    })
+                }
+                
+                for i in 0..args.children.len {
+                    if i < param_types.len {
+                        let arg_type = infer(env, args.children[i], errors)
+                        if !unify(arg_type, param_types[i], env, errors) {
+                            errors.push(TypeError {
+                                message: "Tipo de argumento incorreto",
+                                line: args.children[i].line,
+                                column: args.children[i].column,
+                                suggestion: "Converta o argumento para o tipo esperado"
+                            })
+                        }
+                    }
+                }
+                
+                return return_type
+            }
+            
+            return TYPE_ANY
+        }
+        "FieldAccess" => {
+            let object = node.children[0]
+            let field = node.value
+            
+            let object_type = infer(env, object, errors)
+            
+            // In real implementation, check if field exists in type
+            return TYPE_ANY
+        }
+        "Identifier" => {
+            let name = node.value
+            if env.types.contains(name) {
+                return env.types[name]
+            }
+            
+            // Assume it's a type variable
+            return type_var(name)
+        }
+        "NumberLiteral" => {
+            if node.value.contains(".") {
+                return TYPE_FLOAT
+            }
+            return TYPE_INT
+        }
+        "StringLiteral" => {
+            return TYPE_STRING
+        }
+        "CharLiteral" => {
+            return TYPE_INT
+        }
+        "BooleanLiteral" => {
+            return TYPE_BOOL
+        }
+        "NullLiteral" => {
+            return TYPE_NULL
+        }
+        "ArrayLiteral" => {
+            if node.children.len == 0 {
+                return type_array(TYPE_ANY)
+            }
+            
+            let element_types = []
+            for elem in node.children {
+                element_types.push(infer(env, elem, errors))
+            }
+            
+            let unified_type = element_types[0]
+            for elem_type in element_types {
+                if !unify(unified_type, elem_type, env, errors) {
+                    errors.push(TypeError {
+                        message: "Array deve ter elementos do mesmo tipo",
+                        line: node.line,
+                        column: node.column,
+                        suggestion: "Converta todos os elementos para o mesmo tipo"
+                    })
+                }
+            }
+            
+            return type_array(unified_type)
+        }
+        "TypeDeclaration" => {
+            let name = node.value
+            let type_def = node.children[0]
+            
+            let resolved_type = resolve_type(env, type_def)
+            env.types[name] = resolved_type
+            
+            return TYPE_UNIT
+        }
+        "StructDeclaration" => {
+            let name = node.value
+            let fields = node.children
+            
+            let field_types = dict()
+            for field in fields {
+                field_types[field.value] = resolve_type(env, field.children[0])
+            }
+            
+            let struct_type = type_named(name, [])
+            env.types[name] = struct_type
+            
+            return TYPE_UNIT
+        }
+        "EnumDeclaration" => {
+            let name = node.value
+            let variants = node.children
+            
+            let variant_types = dict()
+            for variant in variants {
+                if variant.children[0] != null {
+                    variant_types[variant.value] = resolve_type(env, variant.children[0])
+                }
+            }
+            
+            let enum_type = type_named(name, [])
+            env.types[name] = enum_type
+            
+            return TYPE_UNIT
+        }
+        _ => {
+            return TYPE_ANY
+        }
+    }
+}
+
+fn infer_pattern(env: TypeEnv, pattern: ASTNode, expected_type: Type, errors: [TypeError]) -> Type {
+    match pattern.type {
+        "WildcardPattern" => {
+            return expected_type
+        }
+        "IdentifierPattern" => {
+            let name = pattern.value
+            env.types[name] = expected_type
+            return expected_type
+        }
+        _ => {
+            return expected_type
+        }
+    }
+}
+
+fn resolve_type(env: TypeEnv, type_node: ASTNode) -> Type {
+    if type_node == null {
+        return TYPE_ANY
+    }
+    
+    match type_node.type {
+        "NamedType" => {
+            let name = type_node.value
+            if env.types.contains(name) {
+                return env.types[name]
+            }
+            return type_named(name, [])
+        }
+        "ArrayType" => {
+            let inner = resolve_type(env, type_node.children[0])
+            return type_array(inner)
+        }
+        "FunctionType" => {
+            let params = type_node.children[0]
+            let return_type = resolve_type(env, type_node.children[1])
+            
+            let param_types = []
+            for param in params.children {
+                param_types.push(resolve_type(env, param))
+            }
+            
+            return type_function(param_types, return_type)
+        }
+        _ => {
+            return TYPE_ANY
+        }
+    }
+}
+
+fn unify(t1: Type, t2: Type, env: TypeEnv, errors: [TypeError]) -> bool {
+    if t1.kind == "Any" || t2.kind == "Any" {
+        return true
+    }
+    
+    if t1.kind == "TypeVar" {
+        env.types[t1.name] = t2
+        return true
+    }
+    
+    if t2.kind == "TypeVar" {
+        env.types[t2.name] = t1
+        return true
+    }
+    
+    if t1.kind != t2.kind {
+        return false
+    }
+    
+    if t1.kind == "Named" && t1.name != t2.name {
+        return false
+    }
+    
+    if t1.params.len != t2.params.len {
+        return false
+    }
+    
+    for i in 0..t1.params.len {
+        if !unify(t1.params[i], t2.params[i], env, errors) {
+            return false
+        }
+    }
+    
+    return true
+}
+
+fn check_exhaustiveness(env: TypeEnv, match_node: ASTNode, value_type: Type) -> bool {
+    // Check if pattern matching is exhaustive
+    // In real implementation, analyze all patterns and check coverage
+    return true
+}
+
+fn check_effects(env: TypeEnv, node: ASTNode) -> [string] {
+    // Check for algebraic effects
+    let effects = []
+    
+    if node.type == "Call" {
+        let callee = node.children[0]
+        if callee.type == "Identifier" && callee.value == "effect" {
+            effects.push("effect")
+        }
+    }
+    
+    for child in node.children {
+        if child != null {
+            effects = effects + check_effects(env, child)
+        }
+    }
+    
+    return effects
+}
+
+fn check_preconditions(env: TypeEnv, node: ASTNode) -> bool {
+    // Check preconditions and invariants
+    return true
+}
+
+fn type_to_string(t: Type) -> string {
+    match t.kind {
+        "Int" => return "Int"
+        "Float" => return "Float"
+        "String" => return "String"
+        "Bool" => return "Bool"
+        "Null" => return "Null"
+        "Unit" => return "()"
+        "Any" => return "Any"
+        "TypeVar" => return "'" + t.name
+        "Function" => {
+            let params = t.params.slice(0, t.params.len - 1)
+            let return_type = t.params[t.params.len - 1]
+            let param_str = params.map(p => type_to_string(p)).join(", ")
+            return "(" + param_str + ") -> " + type_to_string(return_type)
+        }
+        "Array" => {
+            return "[" + type_to_string(t.params[0]) + "]"
+        }
+        "Named" => {
+            if t.params.len > 0 {
+                return t.name + "<" + t.params.map(p => type_to_string(p)).join(", ") + ">"
+            }
+            return t.name
+        }
+        _ => return t.kind
+    }
+}

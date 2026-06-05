@@ -1,0 +1,95 @@
+module stdlib.unicode
+
+/// Unicode string manipulation module
+
+pub fn len(s: string) -> int {
+    return syscall.unicode_len(s)
+}
+
+pub fn char_at(s: string, index: int) -> string {
+    return syscall.unicode_char_at(s, index)
+}
+
+pub fn substring(s: string, start: int, end: int) -> string {
+    return syscall.unicode_substring(s, start, end)
+}
+
+pub fn to_upper(s: string) -> string {
+    return syscall.unicode_to_upper(s)
+}
+
+pub fn to_lower(s: string) -> string {
+    return syscall.unicode_to_lower(s)
+}
+
+pub fn to_title(s: string) -> string {
+    return syscall.unicode_to_title(s)
+}
+
+pub fn is_alpha(c: string) -> bool {
+    return syscall.unicode_is_alpha(c)
+}
+
+pub fn is_digit(c: string) -> bool {
+    return syscall.unicode_is_digit(c)
+}
+
+pub fn is_alnum(c: string) -> bool {
+    return syscall.unicode_is_alnum(c)
+}
+
+pub fn is_space(c: string) -> bool {
+    return syscall.unicode_is_space(c)
+}
+
+pub fn is_punct(c: string) -> bool {
+    return syscall.unicode_is_punct(c)
+}
+
+pub fn is_control(c: string) -> bool {
+    return syscall.unicode_is_control(c)
+}
+
+pub fn is_printable(c: string) -> bool {
+    return syscall.unicode_is_printable(c)
+}
+
+pub fn normalize(s: string, form: string) -> string {
+    return syscall.unicode_normalize(s, form)
+}
+
+pub fn nfc(s: string) -> string {
+    return normalize(s, "NFC")
+}
+
+pub fn nfd(s: string) -> string {
+    return normalize(s, "NFD")
+}
+
+pub fn nfkc(s: string) -> string {
+    return normalize(s, "NFKC")
+}
+
+pub fn nfkd(s: string) -> string {
+    return normalize(s, "NFKD")
+}
+
+pub fn code_point(c: string) -> int {
+    return syscall.unicode_code_point(c)
+}
+
+pub fn from_code_point(cp: int) -> string {
+    return syscall.unicode_from_code_point(cp)
+}
+
+pub fn is_valid(s: string) -> bool {
+    return syscall.unicode_is_valid(s)
+}
+
+pub fn escape(s: string) -> string {
+    return syscall.unicode_escape(s)
+}
+
+pub fn unescape(s: string) -> string {
+    return syscall.unicode_unescape(s)
+}

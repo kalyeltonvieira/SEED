@@ -1,0 +1,344 @@
+module stdlib.template
+
+/// Template engine para SEED
+
+type Template = {
+    source: string
+    delimiters: (string, string)
+    auto_escape: bool
+}
+
+type Context = {
+    variables: dict
+    functions: dict
+}
+
+fn template(source: string) -> Template {
+    return Template {
+        source: source,
+        delimiters: ("{{", "}}"),
+        auto_escape: false
+    }
+}
+
+fn set_delimiters(t: Template, left: string, right: string) {
+    t.delimiters = (left, right)
+}
+
+fn set_auto_escape(t: Template, escape: bool) {
+    t.auto_escape = escape
+}
+
+fn context() -> Context {
+    return Context {
+        variables: dict(),
+        functions: dict()
+    }
+}
+
+fn set(ctx: Context, key: string, value: any) {
+    ctx.variables[key] = value
+}
+
+fn set_function(ctx: Context, name: string, fn: fn(any) -> string) {
+    ctx.functions[name] = fn
+}
+
+fn render(t: Template, ctx: Context) -> string {
+    let result = t.source
+    let (left, right) = t.delimiters
+    
+    // Process variables
+    let var_pattern = left + "\\s*([^}]+)\\s*" + right
+    let var_re = regex(var_pattern)
+    
+    let matches = find_all(var_re, result)
+    for match in matches {
+        let var_name = match.groups[0].trim()
+        let value = get_value(ctx, var_name)
+        
+        if t.auto_escape && is_string(value) {
+            value = html_escape(value)
+        }
+        
+        result = replace(var_re, result, value.to_string())
+    }
+    
+    // Process functions
+    let fn_pattern = left + "\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\(([^)]*)\\)\\s*" + right
+    let fn_re = regex(fn_pattern)
+    
+    let fn_matches = find_all(fn_re, result)
+    for match in fn_matches {
+        let fn_name = match.groups[0]
+        let args_str = match.groups[1]
+        let args = parse_args(args_str, ctx)
+        
+        let value = call_function(ctx, fn_name, args)
+        result = replace(fn_re, result, value)
+    }
+    
+    // Process conditionals
+    result = process_conditionals(t, ctx, result)
+    
+    // Process loops
+    result = process_loops(t, ctx, result)
+    
+    return result
+}
+
+fn get_value(ctx: Context, path: string) -> any {
+    let parts = path.split(".")
+    let value = ctx.variables
+    
+    for part in parts {
+        if is_dict(value) {
+            value = value[part]
+        } else {
+            return ""
+        }
+    }
+    
+    return value
+}
+
+fn parse_args(args_str: string, ctx: Context) -> [any] {
+    if args_str.trim().is_empty() {
+        return []
+    }
+    
+    let args = []
+    let parts = args_str.split(",")
+    
+    for part in parts {
+        let trimmed = part.trim()
+        
+        if trimmed.starts_with("\"") {
+            args.push(trimmed.substring(1, trimmed.len() - 1))
+        } else if trimmed.to_int() != 0 || trimmed == "0" {
+            args.push(trimmed.to_int())
+        } else {
+            args.push(get_value(ctx, trimmed))
+        }
+    }
+    
+    return args
+}
+
+fn call_function(ctx: Context, name: string, args: [any]) -> string {
+    if ctx.functions.contains(name) {
+        let fn = ctx.functions[name]
+        return fn(args)
+    }
+    
+    // Built-in functions
+    match name {
+        "upper" => return args[0].to_upper()
+        "lower" => return args[0].to_lower()
+        "trim" => return args[0].trim()
+        "length" => return args[0].len().to_string()
+        "default" => {
+            if args[0] == null || args[0] == "" {
+                return args[1].to_string()
+            }
+            return args[0].to_string()
+        }
+        _ => return ""
+    }
+}
+
+fn process_conditionals(t: Template, ctx: Context, source: string) -> string {
+    let (left, right) = t.delimiters
+    let result = source
+    
+    // {% if condition %}...{% endif %}
+    let if_pattern = left + "%\\s*if\\s+([^%]+)\\s*" + right + "(.*?)" + left + "%\\s*endif\\s*" + right
+    let if_re = regex(if_pattern)
+    
+    loop {
+        let match = find(if_re, result)
+        match match {
+            Option[Match].Some(m) => {
+                let condition = m.groups[0]
+                let body = m.groups[1]
+                
+                if evaluate_condition(ctx, condition) {
+                    result = replace(if_re, result, body)
+                } else {
+                    result = replace(if_re, result, "")
+                }
+            }
+            Option[Match].None => break
+        }
+    }
+    
+    return result
+}
+
+fn evaluate_condition(ctx: Context, condition: string) -> bool {
+    let trimmed = condition.trim()
+    
+    // Simple equality check
+    if trimmed.contains("==") {
+        let parts = trimmed.split("==")
+        let left = get_value(ctx, parts[0].trim())
+        let right = get_value(ctx, parts[1].trim())
+        return left == right
+    }
+    
+    if trimmed.contains("!=") {
+        let parts = trimmed.split("!=")
+        let left = get_value(ctx, parts[0].trim())
+        let right = get_value(ctx, parts[1].trim())
+        return left != right
+    }
+    
+    // Truthiness check
+    let value = get_value(ctx, trimmed)
+    return value != null && value != false && value != ""
+}
+
+fn process_loops(t: Template, ctx: Context, source: string) -> string {
+    let (left, right) = t.delimiters
+    let result = source
+    
+    // {% for item in items %}...{% endfor %}
+    let for_pattern = left + "%\\s*for\\s+(\\w+)\\s+in\\s+([^%]+)\\s*" + right + "(.*?)" + left + "%\\s*endfor\\s*" + right
+    let for_re = regex(for_pattern)
+    
+    loop {
+        let match = find(for_re, result)
+        match match {
+            Option[Match].Some(m) => {
+                let var_name = m.groups[0]
+                let collection_path = m.groups[1]
+                let body = m.groups[2]
+                
+                let collection = get_value(ctx, collection_path)
+                let output = ""
+                
+                if is_list(collection) {
+                    for item in collection {
+                        ctx.variables[var_name] = item
+                        output = output + render(template(body), ctx)
+                    }
+                }
+                
+                ctx.variables.remove(var_name)
+                result = replace(for_re, result, output)
+            }
+            Option[Match].None => break
+        }
+    }
+    
+    return result
+}
+
+fn html_escape(s: string) -> string {
+    let result = s
+    result = result.replace("&", "&amp;")
+    result = result.replace("<", "&lt;")
+    result = result.replace(">", "&gt;")
+    result = result.replace("\"", "&quot;")
+    result = result.replace("'", "&#39;")
+    return result
+}
+
+fn is_dict(value: any) -> bool {
+    // In real implementation, check type
+    return true
+}
+
+fn is_list(value: any) -> bool {
+    // In real implementation, check type
+    return true
+}
+
+fn is_string(value: any) -> bool {
+    // In real implementation, check type
+    return true
+}
+
+// Template inheritance
+type BaseTemplate = {
+    template: Template
+    blocks: dict
+}
+
+fn base_template(source: string) -> BaseTemplate {
+    let t = template(source)
+    let blocks = dict()
+    
+    // Extract blocks: {% block name %}...{% endblock %}
+    let block_pattern = t.delimiters.0 + "%\\s*block\\s+(\\w+)\\s*" + t.delimiters.1 + "(.*?)" + t.delimiters.0 + "%\\s*endblock\\s*" + t.delimiters.1
+    let block_re = regex(block_pattern)
+    
+    let matches = find_all(block_re, source)
+    for match in matches {
+        blocks[match.groups[0]] = match.groups[1]
+    }
+    
+    return BaseTemplate {
+        template: t,
+        blocks: blocks
+    }
+}
+
+fn extend(base: BaseTemplate, child_source: string, ctx: Context) -> string {
+    let child = template(child_source)
+    
+    // Override blocks from child
+    let child_block_pattern = child.delimiters.0 + "%\\s*block\\s+(\\w+)\\s*" + child.delimiters.1 + "(.*?)" + child.delimiters.0 + "%\\s*endblock\\s*" + child.delimiters.1
+    let child_block_re = regex(child_block_pattern)
+    
+    let matches = find_all(child_block_re, child_source)
+    for match in matches {
+        base.blocks[match.groups[0]] = match.groups[1]
+    }
+    
+    // Render base with overridden blocks
+    let result = base.template.source
+    for (name, content) in base.blocks {
+        let block_pattern = base.delimiters.0 + "%\\s*block\\s+" + name + "\\s*" + base.delimiters.1 + ".*?" + base.delimiters.0 + "%\\s*endblock\\s*" + base.delimiters.1
+        let block_re = regex(block_pattern)
+        result = replace(block_re, result, content)
+    }
+    
+    return render(template(result), ctx)
+}
+
+// Template loading
+fn load_template(path: string) -> Template {
+    let source = fs.read_file(path)
+    return template(source)
+}
+
+fn load_and_render(path: string, ctx: Context) -> string {
+    let t = load_template(path)
+    return render(t, ctx)
+}
+
+// Template caching
+type TemplateCache = {
+    cache: dict
+}
+
+fn template_cache() -> TemplateCache {
+    return TemplateCache {
+        cache: dict()
+    }
+}
+
+fn get_cached(cache: TemplateCache, path: string) -> Template {
+    if cache.cache.contains(path) {
+        return cache.cache[path]
+    }
+    
+    let t = load_template(path)
+    cache.cache[path] = t
+    return t
+}
+
+fn clear_cache(cache: TemplateCache) {
+    cache.cache = dict()
+}

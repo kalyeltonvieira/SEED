@@ -1,0 +1,219 @@
+module cron_job
+
+import stdlib.io
+import stdlib.time
+import stdlib.string
+import stdlib.cli
+
+/// Cron job scheduler para tarefas agendadas
+
+type CronExpression = {
+    minute: string
+    hour: string
+    day_of_month: string
+    month: string
+    day_of_week: string
+}
+
+type CronJob = {
+    name: string
+    expression: CronExpression
+    command: fn()
+    last_run: Option[time.Timestamp]
+    next_run: time.Timestamp
+}
+
+type CronScheduler = {
+    jobs: [CronJob]
+    running: bool
+}
+
+fn cron_expression(expr: string) -> CronExpression {
+    let parts = expr.split(" ")
+    
+    return CronExpression {
+        minute: parts[0],
+        hour: parts[1],
+        day_of_month: parts[2],
+        month: parts[3],
+        day_of_week: parts[4]
+    }
+}
+
+fn cron_job(name: string, expr: string, command: fn()) -> CronJob {
+    let cron_expr = cron_expression(expr)
+    let next_run = calculate_next_run(cron_expr)
+    
+    return CronJob {
+        name: name,
+        expression: cron_expr,
+        command: command,
+        last_run: Option[time.Timestamp].None,
+        next_run: next_run
+    }
+}
+
+fn calculate_next_run(expr: CronExpression) -> time.Timestamp {
+    let now = time.now()
+    let next = now
+    
+    // Simple implementation - calculate next run time
+    // In real implementation, use proper cron parsing
+    
+    if expr.minute != "*" {
+        let minute = expr.minute.to_int()
+        if minute > now.seconds % 60 {
+            next = time.add(next, time.Duration {
+                seconds: minute - (now.seconds % 60),
+                nanos: 0
+            })
+        } else {
+            next = time.add(next, time.Duration {
+                seconds: 60 - (now.seconds % 60) + minute,
+                nanos: 0
+            })
+        }
+    }
+    
+    return next
+}
+
+fn should_run(job: CronJob) -> bool {
+    let now = time.now()
+    return time.to_millis(time.elapsed(job.next_run)) >= 0
+}
+
+fn run_job(job: CronJob) {
+    println("Running job: " + job.name)
+    
+    let start = time.now()
+    job.command()
+    let elapsed = time.elapsed(start)
+    
+    println("Job completed: " + job.name + " (" + time.to_millis(elapsed).to_string() + "ms)")
+    
+    job.last_run = Option[time.Timestamp].Some(time.now())
+    job.next_run = calculate_next_run(job.expression)
+}
+
+fn scheduler() -> CronScheduler {
+    return CronScheduler {
+        jobs: [],
+        running: false
+    }
+}
+
+fn add_job(scheduler: CronScheduler, job: CronJob) {
+    scheduler.jobs.push(job)
+}
+
+fn start(scheduler: CronScheduler) {
+    scheduler.running = true
+    
+    println("=== Cron Scheduler ===")
+    println("Jobs: " + scheduler.jobs.len.to_string())
+    println("")
+    
+    while scheduler.running {
+        for job in scheduler.jobs {
+            if should_run(job) {
+                run_job(job)
+            }
+        }
+        
+        time.sleep(1000)
+    }
+}
+
+fn stop(scheduler: CronScheduler) {
+    scheduler.running = false
+}
+
+fn list_jobs(scheduler: CronScheduler) {
+    println("Scheduled Jobs:")
+    for job in scheduler.jobs {
+        println("  " + job.name)
+        println("    Expression: " + job.expression.minute + " " + 
+              job.expression.hour + " " + job.expression.day_of_month + " " +
+              job.expression.month + " " + job.expression.day_of_week)
+        println("    Next run: " + time.format(job.next_run, "%Y-%m-%d %H:%M:%S"))
+        
+        match job.last_run {
+            Option[time.Timestamp].Some(t) => {
+                println("    Last run: " + time.format(t, "%Y-%m-%d %H:%M:%S"))
+            }
+            Option[time.Timestamp].None => {
+                println("    Last run: Never")
+            }
+        }
+    }
+}
+
+// Common cron expressions
+fn every_minute() -> string {
+    return "* * * * *"
+}
+
+fn every_hour() -> string {
+    return "0 * * * *"
+}
+
+fn every_day_at(hour: int) -> string {
+    return "0 " + hour.to_string() + " * * *"
+}
+
+fn every_week_on(day_of_week: int) -> string {
+    return "0 0 * * " + day_of_week.to_string()
+}
+
+fn every_month_on(day: int) -> string {
+    return "0 0 " + day.to_string() + " * *"
+}
+
+fn every_cron(minute: int, hour: int) -> string {
+    return minute.to_string() + " " + hour.to_string() + " * * *"
+}
+
+// Example jobs
+fn backup_job() {
+    println("Running backup...")
+    // In real implementation, perform backup
+}
+
+fn cleanup_job() {
+    println("Running cleanup...")
+    // In real implementation, perform cleanup
+}
+
+fn send_email_job() {
+    println("Sending email report...")
+    // In real implementation, send email
+}
+
+fn log_rotation_job() {
+    println("Rotating logs...")
+    // In real implementation, rotate logs
+}
+
+fn main() {
+    let sched = scheduler()
+    
+    // Add jobs
+    add_job(sched, cron_job("backup", every_day_at(2), backup_job))
+    add_job(sched, cron_job("cleanup", every_day_at(3), cleanup_job))
+    add_job(sched, cron_job("email_report", every_week_on(1), send_email_job))
+    add_job(sched, cron_job("log_rotation", every_day_at(4), log_rotation_job))
+    
+    let args = os.args().slice(1, os.args().len)
+    
+    if args.len == 0 {
+        println("Usage: cron_job [list|run]")
+        return
+    }
+    
+    match args[0] {
+        "list" => list_jobs(sched)
+        "run" => start(sched)
+        _ => println("Unknown command: " + args[0])
+    }
+}

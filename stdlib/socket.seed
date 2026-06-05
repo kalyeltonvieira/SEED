@@ -1,0 +1,70 @@
+module stdlib.socket
+
+/// Socket networking module
+
+pub type Socket = {
+    fd: int,
+    family: string,
+    type: string
+}
+
+pub type Address = {
+    host: string,
+    port: int
+}
+
+pub fn socket(family: string, sock_type: string) -> Socket {
+    return syscall.socket_new(family, sock_type)
+}
+
+pub fn bind(s: Socket, addr: Address) -> Result<void, string> {
+    return syscall.socket_bind(s, addr)
+}
+
+pub fn listen(s: Socket, backlog: int) -> Result<void, string> {
+    return syscall.socket_listen(s, backlog)
+}
+
+pub fn accept(s: Socket) -> Result<Socket, string> {
+    return syscall.socket_accept(s)
+}
+
+pub fn connect(s: Socket, addr: Address) -> Result<void, string> {
+    return syscall.socket_connect(s, addr)
+}
+
+pub fn send(s: Socket, data: string) -> Result<int, string> {
+    return syscall.socket_send(s, data)
+}
+
+pub fn recv(s: Socket, size: int) -> Result<string, string> {
+    return syscall.socket_recv(s, size)
+}
+
+pub fn send_to(s: Socket, data: string, addr: Address) -> Result<int, string> {
+    return syscall.socket_send_to(s, data, addr)
+}
+
+pub fn recv_from(s: Socket, size: int) -> Result<(string, Address), string> {
+    return syscall.socket_recv_from(s, size)
+}
+
+pub fn close(s: Socket) -> Result<void, string> {
+    return syscall.socket_close(s)
+}
+
+pub fn shutdown(s: Socket, how: int) -> Result<void, string> {
+    return syscall.socket_shutdown(s, how)
+}
+
+pub fn set_option(s: Socket, level: int, optname: int, optval: int) -> Result<void, string> {
+    return syscall.socket_set_option(s, level, optname, optval)
+}
+
+pub fn get_option(s: Socket, level: int, optname: int) -> Result<int, string> {
+    return syscall.socket_get_option(s, level, optname)
+}
+
+pub fn resolve(host: string) -> Result<Address, string> {
+    return syscall.socket_resolve(host)
+}

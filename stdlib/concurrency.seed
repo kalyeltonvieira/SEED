@@ -1,0 +1,341 @@
+module stdlib.concurrency
+
+/// Concorrência: async/await, channels, mutex, threads
+
+type Future[T] = {
+    completed: bool
+    value: Option[T]
+    error: Option[string]
+    callbacks: List[fn(T)]
+}
+
+type Channel[T] = {
+    buffer: List[T]
+    capacity: int
+    senders: int
+    receivers: int
+}
+
+type Mutex = {
+    locked: bool
+    owner: Option[int]
+    queue: List[int]
+}
+
+type Thread = {
+    id: int
+    running: bool
+}
+
+// Async/Await
+async fn async[T](f: fn() -> T) -> Future[T] {
+    let future = Future[T] {
+        completed: false,
+        value: Option[T].None,
+        error: Option[string].None,
+        callbacks: List[fn(T)]()
+    }
+    
+    // Execute in background
+    syscall.spawn_thread(fn() {
+        try {
+            let result = f()
+            future.completed = true
+            future.value = Option[T].Some(result)
+            for callback in future.callbacks {
+                callback(result)
+            }
+        } catch {
+            future.completed = true
+            future.error = Option[string].Some("Error")
+        }
+    })
+    
+    return future
+}
+
+fn await[T](future: Future[T]) -> T {
+    while !future.completed {
+        time.sleep(1)
+    }
+    
+    match future.value {
+        Option[T].Some(v) => return v
+        Option[T].None => {
+            match future.error {
+                Option[string].Some(e) => throw e
+                Option[string].None => throw "Unknown error"
+            }
+        }
+    }
+}
+
+fn then[T, U](future: Future[T], f: fn(T) -> U) -> Future[U] {
+    let new_future = Future[U] {
+        completed: false,
+        value: Option[U].None,
+        error: Option[string].None,
+        callbacks: List[fn(U)]()
+    }
+    
+    if future.completed {
+        match future.value {
+            Option[T].Some(v) => {
+                try {
+                    let result = f(v)
+                    new_future.completed = true
+                    new_future.value = Option[U].Some(result)
+                } catch {
+                    new_future.completed = true
+                    new_future.error = Option[string].Some("Error")
+                }
+            }
+            Option[T].None => {}
+        }
+    } else {
+        future.callbacks.push(fn(v: T) {
+            try {
+                let result = f(v)
+                new_future.completed = true
+                new_future.value = Option[U].Some(result)
+                for callback in new_future.callbacks {
+                    callback(result)
+                }
+            } catch {
+                new_future.completed = true
+                new_future.error = Option[string].Some("Error")
+            }
+        })
+    }
+    
+    return new_future
+}
+
+// Channels
+fn channel[T](capacity: int) -> Channel[T] {
+    return Channel[T] {
+        buffer: List[T](),
+        capacity: capacity,
+        senders: 0,
+        receivers: 0
+    }
+}
+
+fn send[T](ch: Channel[T], value: T) {
+    while ch.buffer.len() >= ch.capacity {
+        time.sleep(1)
+    }
+    
+    ch.buffer.push(value)
+    ch.senders = ch.senders + 1
+}
+
+fn receive[T](ch: Channel[T]) -> T {
+    while ch.buffer.len() == 0 {
+        time.sleep(1)
+    }
+    
+    let value = ch.buffer.pop()
+    ch.receivers = ch.receivers + 1
+    return value
+}
+
+fn try_send[T](ch: Channel[T], value: T) -> bool {
+    if ch.buffer.len() >= ch.capacity {
+        return false
+    }
+    
+    ch.buffer.push(value)
+    ch.senders = ch.senders + 1
+    return true
+}
+
+fn try_receive[T](ch: Channel[T]) -> Option[T] {
+    if ch.buffer.len() == 0 {
+        return Option[T].None
+    }
+    
+    let value = ch.buffer.pop()
+    ch.receivers = ch.receivers + 1
+    return Option[T].Some(value)
+}
+
+fn close[T](ch: Channel[T]) {
+    // Mark channel as closed
+}
+
+// Mutex
+fn mutex() -> Mutex {
+    return Mutex {
+        locked: false,
+        owner: Option[int].None,
+        queue: List[int]()
+    }
+}
+
+fn lock(m: Mutex) {
+    let thread_id = syscall.thread_id()
+    
+    while m.locked {
+        if m.owner == Option[int].Some(thread_id) {
+            // Already owned by this thread (reentrant)
+            return
+        }
+        m.queue.push(thread_id)
+        time.sleep(1)
+    }
+    
+    m.locked = true
+    m.owner = Option[int].Some(thread_id)
+}
+
+fn unlock(m: Mutex) {
+    let thread_id = syscall.thread_id()
+    
+    if m.owner != Option[int].Some(thread_id) {
+        throw "Mutex not owned by this thread"
+    }
+    
+    m.locked = false
+    m.owner = Option[int].None
+    
+    if m.queue.len() > 0 {
+        let next = m.queue.pop()
+        // Wake up next thread
+    }
+}
+
+fn try_lock(m: Mutex) -> bool {
+    if m.locked {
+        return false
+    }
+    
+    m.locked = true
+    m.owner = Option[int].Some(syscall.thread_id())
+    return true
+}
+
+// Threads
+fn spawn(f: fn()) -> Thread {
+    let thread_id = syscall.spawn_thread(f)
+    return Thread {
+        id: thread_id,
+        running: true
+    }
+}
+
+fn join(thread: Thread) {
+    while thread.running {
+        time.sleep(1)
+    }
+}
+
+fn sleep(ms: int) {
+    time.sleep(ms)
+}
+
+fn thread_id() -> int {
+    return syscall.thread_id()
+}
+
+// Parallel operations
+fn parallel[T](tasks: [fn() -> T]) -> [Future[T]] {
+    let futures = []
+    for task in tasks {
+        futures.push(async(task))
+    }
+    return futures
+}
+
+fn wait_all[T](futures: [Future[T]]) -> [T] {
+    let results = []
+    for future in futures {
+        results.push(await(future))
+    }
+    return results
+}
+
+fn race[T](futures: [Future[T]]) -> T {
+    loop {
+        for future in futures {
+            if future.completed {
+                return await(future)
+            }
+        }
+        time.sleep(1)
+    }
+}
+
+// Atomic operations
+type Atomic[T] = {
+    value: T
+}
+
+fn atomic[T](initial: T) -> Atomic[T] {
+    return Atomic[T] { value: initial }
+}
+
+fn load[T](atom: Atomic[T]) -> T {
+    return syscall.atomic_load(atom)
+}
+
+fn store[T](atom: Atomic[T], value: T) {
+    syscall.atomic_store(atom, value)
+}
+
+fn compare_and_swap[T](atom: Atomic[T], expected: T, new: T) -> bool {
+    return syscall.atomic_cas(atom, expected, new)
+}
+
+fn fetch_add[T](atom: Atomic[T], delta: T) -> T {
+    return syscall.atomic_fetch_add(atom, delta)
+}
+
+// WaitGroup
+type WaitGroup = {
+    count: int
+}
+
+fn wait_group() -> WaitGroup {
+    return WaitGroup { count: 0 }
+}
+
+fn add(wg: WaitGroup, delta: int) {
+    wg.count = wg.count + delta
+}
+
+fn done(wg: WaitGroup) {
+    wg.count = wg.count - 1
+}
+
+fn wait(wg: WaitGroup) {
+    while wg.count > 0 {
+        time.sleep(1)
+    }
+}
+
+// Once
+type Once = {
+    done: bool
+    mutex: Mutex
+}
+
+fn once() -> Once {
+    return Once {
+        done: false,
+        mutex: mutex()
+    }
+}
+
+fn do_once(o: Once, f: fn()) {
+    if o.done {
+        return
+    }
+    
+    lock(o.mutex)
+    if !o.done {
+        f()
+        o.done = true
+    }
+    unlock(o.mutex)
+}

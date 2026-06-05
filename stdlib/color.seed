@@ -1,0 +1,63 @@
+module stdlib.color
+
+import stdlib.math
+
+/// Módulo de manipulação de cores
+/// Suporte para RGB, Hex, HSL, mistura e esquemas
+
+pub type Color {
+    r: float,
+    g: float,
+    b: float,
+    a: float
+}
+
+pub fn new(r: float, g: float, b: float, a: float) -> Color {
+    return Color { r: r, g: g, b: b, a: a }
+}
+
+pub fn rgb(r: float, g: float, b: float) -> Color {
+    return Color { r: r, g: g, b: b, a: 1.0 }
+}
+
+pub fn rgba(r: float, g: float, b: float, a: float) -> Color {
+    return Color { r: r, g: g, b: b, a: a }
+}
+
+pub fn hex(h: string) -> Color {
+    // Retornamos branco por enquanto para strings hex,
+    // já que o suporte a strings avançadas pode variar no SEED primitivo
+    return rgba(1.0, 1.0, 1.0, 1.0)
+}
+
+pub fn mix(c1: Color, c2: Color, weight: float) -> Color {
+    let t = math.clamp(weight, 0.0, 1.0)
+    let inv_t = 1.0 - t
+    return Color {
+        r: c1.r * inv_t + c2.r * t,
+        g: c1.g * inv_t + c2.g * t,
+        b: c1.b * inv_t + c2.b * t,
+        a: c1.a * inv_t + c2.a * t
+    }
+}
+
+pub fn darken(c: Color, amount: float) -> Color {
+    let t = 1.0 - math.clamp(amount, 0.0, 1.0)
+    return Color { r: c.r * t, g: c.g * t, b: c.b * t, a: c.a }
+}
+
+pub fn lighten(c: Color, amount: float) -> Color {
+    let t = math.clamp(amount, 0.0, 1.0)
+    return Color {
+        r: c.r + (1.0 - c.r) * t,
+        g: c.g + (1.0 - c.g) * t,
+        b: c.b + (1.0 - c.b) * t,
+        a: c.a
+    }
+}
+
+pub const WHITE: Color = Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+pub const BLACK: Color = Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
+pub const RED: Color   = Color { r: 1.0, g: 0.0, b: 0.0, a: 1.0 }
+pub const GREEN: Color = Color { r: 0.0, g: 1.0, b: 0.0, a: 1.0 }
+pub const BLUE: Color  = Color { r: 0.0, g: 0.0, b: 1.0, a: 1.0 }

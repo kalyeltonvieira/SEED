@@ -1,0 +1,37 @@
+module stdlib.toml
+
+/// TOML serialization module
+
+pub type TomlValue = {
+    // Can be string, int, float, bool, array, or table
+}
+
+pub fn parse(s: string) -> Result<TomlValue, string> {
+    return syscall.toml_parse(s)
+}
+
+pub fn stringify(v: TomlValue) -> Result<string, string> {
+    return syscall.toml_stringify(v)
+}
+
+pub fn load_file(path: string) -> Result<TomlValue, string> {
+    let content = io.read_file(path)
+    return parse(content)
+}
+
+pub fn save_file(path: string, v: TomlValue) -> Result<void, string> {
+    let result = stringify(v)
+    if result.is_error {
+        return Result.error(result.error)
+    }
+    io.write_file(path, result.value)
+    return Result.ok(())
+}
+
+pub fn to_json(v: TomlValue) -> Result<JsonValue, string> {
+    return syscall.toml_to_json(v)
+}
+
+pub fn from_json(v: JsonValue) -> Result<TomlValue, string> {
+    return syscall.toml_from_json(v)
+}

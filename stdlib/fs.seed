@@ -1,0 +1,65 @@
+module stdlib.fs
+
+/// File system module
+
+pub fn copy(src: string, dst: string) {
+    syscall.fs_copy(src, dst)
+}
+
+pub fn move(src: string, dst: string) {
+    syscall.fs_move(src, dst)
+}
+
+pub fn rename(old: string, new: string) {
+    syscall.fs_rename(old, new)
+}
+
+pub type FileMeta = {
+    size: int
+    modified: string
+    is_dir: bool
+    is_file: bool
+}
+
+pub fn metadata(path: string) -> FileMeta {
+    return syscall.fs_metadata(path)
+}
+
+pub fn is_file(path: string) -> bool {
+    return syscall.fs_is_file(path)
+}
+
+pub fn is_dir(path: string) -> bool {
+    return syscall.fs_is_dir(path)
+}
+
+pub fn dirname(path: string) -> string {
+    let parts = path.split("\\")
+    parts.pop()
+    return parts.join("\\")
+}
+
+pub fn basename(path: string) -> string {
+    return path.split("\\").last().split("/").last()
+}
+
+pub fn extension(path: string) -> string {
+    let name = basename(path)
+    let parts = name.split(".")
+    if parts.len > 1 {
+        return parts.last()
+    }
+    return ""
+}
+
+pub fn join(parts: [string]) -> string {
+    return parts.join("\\")
+}
+
+pub fn glob(pattern: string) -> [string] {
+    return syscall.fs_glob(pattern)
+}
+
+pub fn watch(path: string, callback: fn(string)) {
+    syscall.fs_watch(path, callback)
+}

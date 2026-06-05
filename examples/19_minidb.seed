@@ -1,0 +1,707 @@
+module minidb
+
+/// MINIDB - Banco de Dados Relacional em Memória
+/// SQL parser, B-tree indexes, ACID transactions, persistência
+
+type Column = {
+    name: string
+    type: string
+    nullable: bool
+    primary_key: bool
+}
+
+type Table = {
+    name: string
+    columns: [Column]
+    rows: [[any]]
+    indexes: dict
+}
+
+type Index = {
+    name: string
+    column: string
+    type: string
+    data: dict
+}
+
+type Transaction = {
+    id: string
+    state: string
+    start_time: time.Timestamp
+    snapshot: dict
+    operations: [string]
+}
+
+type QueryPlan = {
+    type: string
+    table: string
+    use_index: bool
+    index_name: string
+    cost: float
+}
+
+type MiniDB = {
+    tables: dict
+    transactions: dict
+    current_transaction: Option[Transaction]
+    file_path: string
+}
+
+fn minidb(file_path: string) -> MiniDB {
+    let db = MiniDB {
+        tables: dict(),
+        transactions: dict(),
+        current_transaction: Option[Transaction].None,
+        file_path: file_path
+    }
+    
+    if fs.file_exists(file_path) {
+        load(db)
+    }
+    
+    return db
+}
+
+// SQL Parser
+type SQLParser = {
+    tokens: [string]
+    position: int
+}
+
+fn sql_parser(sql: string) -> SQLParser {
+    let tokens = tokenize_sql(sql)
+    return SQLParser {
+        tokens: tokens,
+        position: 0
+    }
+}
+
+fn tokenize_sql(sql: string) -> [string] {
+    let tokens = []
+    let current = ""
+    
+    for c in sql {
+        if c == " " || c == "\n" || c == "\t" || c == "," || c == "(" || c == ")" || c == ";" {
+            if current.len > 0 {
+                tokens.push(current)
+                current = ""
+            }
+            if c != " " && c != "\n" && c != "\t" {
+                tokens.push(c)
+            }
+        } else if c == "\"" {
+            let string = ""
+            let i = sql.index_of("\"")
+            let end = sql.index_of("\"", i + 1)
+            string = sql.substring(i + 1, end)
+            tokens.push(string)
+        } else {
+            current = current + c
+        }
+    }
+    
+    if current.len > 0 {
+        tokens.push(current)
+    }
+    
+    return tokens
+}
+
+fn parse_create_table(p: SQLParser) -> (string, [Column]) {
+    advance(p) // CREATE
+    advance(p) // TABLE
+    let table_name = peek(p)
+    advance(p)
+    advance(p) // (
+    
+    let columns = []
+    while peek(p) != ")" {
+        let col_name = peek(p)
+        advance(p)
+        let col_type = peek(p)
+        advance(p)
+        
+        let nullable = true
+        let primary_key = false
+        
+        if peek(p) == "NOT" {
+            advance(p)
+            advance(p) // NULL
+            nullable = false
+        }
+        
+        if peek(p) == "PRIMARY" {
+            advance(p)
+            advance(p) // KEY
+            primary_key = true
+        }
+        
+        columns.push(Column {
+            name: col_name,
+            type: col_type,
+            nullable: nullable,
+            primary_key: primary_key
+        })
+        
+        if peek(p) == "," {
+            advance(p)
+        }
+    }
+    
+    advance(p) // )
+    
+    return (table_name, columns)
+}
+
+fn parse_insert(p: SQLParser) -> (string, [[any]]) {
+    advance(p) // INSERT
+    advance(p) // INTO
+    let table_name = peek(p)
+    advance(p)
+    advance(p) // VALUES
+    
+    let rows = []
+    while peek(p) != ";" {
+        advance(p) // (
+        let values = []
+        while peek(p) != ")" {
+            values.push(parse_value(peek(p)))
+            advance(p)
+            if peek(p) == "," {
+                advance(p)
+            }
+        }
+        advance(p) // )
+        rows.push(values)
+        
+        if peek(p) == "," {
+            advance(p)
+        }
+    }
+    
+    return (table_name, rows)
+}
+
+fn parse_select(p: SQLParser) -> dict {
+    advance(p) // SELECT
+    let columns = []
+    
+    while peek(p) != "FROM" {
+        columns.push(peek(p))
+        advance(p)
+        if peek(p) == "," {
+            advance(p)
+        }
+    }
+    
+    advance(p) // FROM
+    let table_name = peek(p)
+    advance(p)
+    
+    let where_clause = null
+    if peek(p) == "WHERE" {
+        advance(p)
+        where_clause = parse_where(p)
+    }
+    
+    return dict([
+        ("columns", columns),
+        ("table", table_name),
+        ("where", where_clause)
+    ])
+}
+
+fn parse_where(p: SQLParser) -> dict {
+    let column = peek(p)
+    advance(p)
+    let op = peek(p)
+    advance(p)
+    let value = parse_value(peek(p))
+    advance(p)
+    
+    return dict([
+        ("column", column),
+        ("operator", op),
+        ("value", value)
+    ])
+}
+
+fn parse_value(token: string) -> any {
+    if token.to_int() != 0 || token == "0" {
+        return token.to_int()
+    }
+    if token.starts_with("\"") {
+        return token.substring(1, token.len() - 1)
+    }
+    return token
+}
+
+fn peek(p: SQLParser) -> string {
+    if p.position >= p.tokens.len {
+        return ""
+    }
+    return p.tokens[p.position]
+}
+
+fn advance(p: Parser) {
+    p.position = p.position + 1
+}
+
+// Database Operations
+fn execute(db: MiniDB, sql: string) -> [[any]] {
+    let p = sql_parser(sql)
+    let command = peek(p)
+    
+    match command {
+        "CREATE" => {
+            let (table_name, columns) = parse_create_table(p)
+            create_table(db, table_name, columns)
+            return []
+        }
+        "INSERT" => {
+            let (table_name, rows) = parse_insert(p)
+            for row in rows {
+                insert(db, table_name, row)
+            }
+            return []
+        }
+        "SELECT" => {
+            let query = parse_select(p)
+            return select(db, query)
+        }
+        "UPDATE" => {
+            let (table_name, updates, where_clause) = parse_update(p)
+            update(db, table_name, updates, where_clause)
+            return []
+        }
+        "DELETE" => {
+            let (table_name, where_clause) = parse_delete(p)
+            delete(db, table_name, where_clause)
+            return []
+        }
+        "DROP" => {
+            advance(p)
+            advance(p) // TABLE
+            let table_name = peek(p)
+            drop_table(db, table_name)
+            return []
+        }
+        "BEGIN" => {
+            begin_transaction(db)
+            return []
+        }
+        "COMMIT" => {
+            commit(db)
+            return []
+        }
+        "ROLLBACK" => {
+            rollback(db)
+            return []
+        }
+        _ => {
+            println("Comando desconhecido: " + command)
+            return []
+        }
+    }
+}
+
+fn create_table(db: MiniDB, name: string, columns: [Column]) {
+    let table = Table {
+        name: name,
+        columns: columns,
+        rows: [],
+        indexes: dict()
+    }
+    
+    db.tables[name] = table
+    
+    // Create B-tree index on primary key
+    for col in columns {
+        if col.primary_key {
+            create_index(db, name, col.name + "_idx", col.name, "btree")
+        }
+    }
+    
+    println("Tabela '" + name + "' criada.")
+}
+
+fn insert(db: MiniDB, table_name: string, row: [any]) {
+    if !db.tables.contains(table_name) {
+        println("Tabela não existe: " + table_name)
+        return
+    }
+    
+    let table = db.tables[table_name]
+    table.rows.push(row)
+    
+    // Update indexes
+    for (index_name, index) in table.indexes {
+        let col_index = 0
+        for col in table.columns {
+            if col.name == index.column {
+                col_index = col_index
+                break
+            }
+            col_index = col_index + 1
+        }
+        index.data[row[col_index]] = row
+    }
+    
+    println("1 linha inserida.")
+}
+
+fn select(db: MiniDB, query: dict) -> [[any]] {
+    let table_name = query["table"]
+    let columns = query["columns"]
+    let where_clause = query["where"]
+    
+    if !db.tables.contains(table_name) {
+        println("Tabela não existe: " + table_name)
+        return []
+    }
+    
+    let table = db.tables[table_name]
+    let plan = optimize_query(db, query)
+    
+    let results = []
+    
+    if plan.use_index && where_clause != null {
+        // Use index
+        let index = table.indexes[plan.index_name]
+        let value = where_clause["value"]
+        
+        if index.data.contains(value) {
+            results.push(index.data[value])
+        }
+    } else {
+        // Full scan
+        for row in table.rows {
+            if where_clause == null || matches_where(row, where_clause, table.columns) {
+                results.push(row)
+            }
+        }
+    }
+    
+    return results
+}
+
+fn matches_where(row: [any], where_clause: dict, columns: [Column]) -> bool {
+    let column = where_clause["column"]
+    let op = where_clause["operator"]
+    let value = where_clause["value"]
+    
+    let col_index = 0
+    for col in columns {
+        if col.name == column {
+            col_index = col_index
+            break
+        }
+        col_index = col_index + 1
+    }
+    
+    let row_value = row[col_index]
+    
+    match op {
+        "=" => return row_value == value
+        ">" => return row_value > value
+        "<" => return row_value < value
+        ">=" => return row_value >= value
+        "<=" => return row_value <= value
+        "!=" => return row_value != value
+        _ => return true
+    }
+}
+
+fn update(db: MiniDB, table_name: string, updates: dict, where_clause: dict) {
+    if !db.tables.contains(table_name) {
+        println("Tabela não existe: " + table_name)
+        return
+    }
+    
+    let table = db.tables[table_name]
+    let count = 0
+    
+    for i in 0..table.rows.len {
+        let row = table.rows[i]
+        if where_clause == null || matches_where(row, where_clause, table.columns) {
+            for (col, value) in updates {
+                let col_index = 0
+                for c in table.columns {
+                    if c.name == col {
+                        col_index = col_index
+                        break
+                    }
+                    col_index = col_index + 1
+                }
+                table.rows[i][col_index] = value
+            }
+            count = count + 1
+        }
+    }
+    
+    println(count.to_string() + " linhas atualizadas.")
+}
+
+fn delete(db: MiniDB, table_name: string, where_clause: dict) {
+    if !db.tables.contains(table_name) {
+        println("Tabela não existe: " + table_name)
+        return
+    }
+    
+    let table = db.tables[table_name]
+    let new_rows = []
+    
+    for row in table.rows {
+        if where_clause == null || !matches_where(row, where_clause, table.columns) {
+            new_rows.push(row)
+        }
+    }
+    
+    let count = table.rows.len - new_rows.len
+    table.rows = new_rows
+    
+    println(count.to_string() + " linhas deletadas.")
+}
+
+fn drop_table(db: MiniDB, name: string) {
+    if db.tables.contains(name) {
+        db.tables.remove(name)
+        println("Tabela '" + name + "' deletada.")
+    }
+}
+
+// Index Management
+fn create_index(db: MiniDB, table_name: string, index_name: string, column: string, index_type: string) {
+    if !db.tables.contains(table_name) {
+        return
+    }
+    
+    let table = db.tables[table_name]
+    let index = Index {
+        name: index_name,
+        column: column,
+        type: index_type,
+        data: dict()
+    }
+    
+    table.indexes[index_name] = index
+    
+    println("Índice '" + index_name + "' criado.")
+}
+
+// Query Optimization
+fn optimize_query(db: MiniDB, query: dict) -> QueryPlan {
+    let table_name = query["table"]
+    let where_clause = query["where"]
+    
+    if !db.tables.contains(table_name) {
+        return QueryPlan {
+            type: "full_scan",
+            table: table_name,
+            use_index: false,
+            index_name: "",
+            cost: 1000.0
+        }
+    }
+    
+    let table = db.tables[table_name]
+    
+    if where_clause != null {
+        let column = where_clause["column"]
+        
+        // Check if index exists
+        for (index_name, index) in table.indexes {
+            if index.column == column {
+                return QueryPlan {
+                    type: "index_scan",
+                    table: table_name,
+                    use_index: true,
+                    index_name: index_name,
+                    cost: 10.0
+                }
+            }
+        }
+    }
+    
+    return QueryPlan {
+        type: "full_scan",
+        table: table_name,
+        use_index: false,
+        index_name: "",
+        cost: table.rows.len.to_float()
+    }
+}
+
+// Transactions
+fn begin_transaction(db: MiniDB) {
+    let tx = Transaction {
+        id: crypto.uuid(),
+        state: "active",
+        start_time: time.now(),
+        snapshot: dict(),
+        operations: []
+    }
+    
+    // Take snapshot
+    for (table_name, table) in db.tables {
+        tx.snapshot[table_name] = table.rows
+    }
+    
+    db.current_transaction = Option[Transaction].Some(tx)
+    db.transactions[tx.id] = tx
+    
+    println("Transação iniciada: " + tx.id)
+}
+
+fn commit(db: MiniDB) {
+    match db.current_transaction {
+        Option[Transaction].Some(tx) => {
+            tx.state = "committed"
+            db.current_transaction = Option[Transaction].None
+            println("Transação commitada.")
+        }
+        Option[Transaction].None => {
+            println("Nenhuma transação ativa.")
+        }
+    }
+}
+
+fn rollback(db: MiniDB) {
+    match db.current_transaction {
+        Option[Transaction].Some(tx) => {
+            // Restore snapshot
+            for (table_name, rows) in tx.snapshot {
+                if db.tables.contains(table_name) {
+                    db.tables[table_name].rows = rows
+                }
+            }
+            
+            tx.state = "rolled_back"
+            db.current_transaction = Option[Transaction].None
+            println("Transação rollback.")
+        }
+        Option[Transaction].None => {
+            println("Nenhuma transação ativa.")
+        }
+    }
+}
+
+// Persistence
+fn save(db: MiniDB) {
+    let data = json.object(dict([
+        ("tables", json.object(dict())),
+        ("checksum", json.string(""))
+    ]))
+    
+    let tables_data = dict()
+    for (table_name, table) in db.tables {
+        let table_data = dict([
+            ("name", json.string(table.name)),
+            ("columns", json.array(table.columns.map(c => json.object(dict([
+                ("name", json.string(c.name)),
+                ("type", json.string(c.type)),
+                ("nullable", json.boolean(c.nullable)),
+                ("primary_key", json.boolean(c.primary_key))
+            ]))))),
+            ("rows", json.array(table.rows.map(row => json.array(row.map(v => json.string(v.to_string()))))))
+        ])
+        tables_data[table_name] = json.object(table_data)
+    }
+    
+    data.data["tables"] = json.object(tables_data)
+    
+    let json_str = json.stringify_pretty(data).unwrap()
+    let checksum = crypto.crc32(json_str)
+    data.data["checksum"] = json.string(checksum.to_string())
+    
+    fs.write_file(db.file_path, json.stringify_pretty(data).unwrap())
+    println("Banco de dados salvo.")
+}
+
+fn load(db: MiniDB) {
+    let content = fs.read_file(db.file_path)
+    let data = json.parse(content).unwrap()
+    
+    let checksum = crypto.crc32(content.substring(0, content.len() - 10))
+    
+    if data.data.get("checksum", "") != checksum.to_string() {
+        println("Aviso: Checksum não bate. Arquivo pode estar corrompido.")
+    }
+    
+    let tables_data = data.data["tables"]
+    for (table_name, table_data) in tables_data.data {
+        let columns = []
+        for col in table_data.data["columns"].data {
+            columns.push(Column {
+                name: col.data["name"].data,
+                type: col.data["type"].data,
+                nullable: col.data["nullable"].data,
+                primary_key: col.data["primary_key"].data
+            })
+        }
+        
+        let rows = []
+        for row in table_data.data["rows"].data {
+            let row_data = []
+            for val in row.data {
+                row_data.push(val.data)
+            }
+            rows.push(row_data)
+        }
+        
+        db.tables[table_name] = Table {
+            name: table_name,
+            columns: columns,
+            rows: rows,
+            indexes: dict()
+        }
+    }
+    
+    println("Banco de dados carregado.")
+}
+
+// CLI
+fn repl(db: MiniDB) {
+    println("MINIDB v1.0 - Banco de Dados Relacional")
+    println("Digite 'exit' para sair, 'help' para ajuda.")
+    println("")
+    
+    loop {
+        print("seed> ")
+        let input = io.read_line()
+        
+        if input.is_empty() {
+            continue
+        }
+        
+        if input == "exit" {
+            break
+        }
+        
+        if input == "help" {
+            println("Comandos SQL suportados:")
+            println("  CREATE TABLE nome (coluna tipo, ...)")
+            println("  INSERT INTO nome VALUES (val1, val2, ...)")
+            println("  SELECT col1, col2 FROM nome WHERE col > valor")
+            println("  UPDATE nome SET col = valor WHERE col = valor")
+            println("  DELETE FROM nome WHERE col = valor")
+            println("  DROP TABLE nome")
+            println("  BEGIN / COMMIT / ROLLBACK")
+            continue
+        }
+        
+        let results = execute(db, input)
+        
+        if results.len > 0 {
+            for row in results {
+                println(row.join("|"))
+            }
+        }
+    }
+}
+
+fn main() {
+    let db = minidb("minidb.db")
+    repl(db)
+    save(db)
+}

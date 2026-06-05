@@ -1,0 +1,417 @@
+module registry
+
+import stdlib.io
+import stdlib.fs
+import stdlib.net
+import stdlib.db
+import stdlib.crypto
+import stdlib.json
+import stdlib.time
+
+/// REGISTRO DE PACOTES SEED
+/// Servidor de registro de pacotes com versionamento semântico
+
+type PackageInfo = {
+    name: string
+    version: string
+    description: string
+    author: string
+    repository: string
+    license: string
+    homepage: string
+    keywords: [string]
+    files: [string]
+    checksum: string
+    published_at: time.Timestamp
+    downloads: int
+}
+
+type User = {
+    id: int
+    username: string
+    email: string
+    api_key: string
+}
+
+const DB_PATH = "registry.db"
+const STORAGE_DIR = "packages"
+const PORT = 8080
+
+let db = null
+
+fn init_db() {
+    db = db.sqlite_open(DB_PATH).unwrap()
+    
+    // Create tables
+    db.execute("
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE,
+            email TEXT UNIQUE,
+            api_key TEXT UNIQUE,
+            created_at INTEGER
+        )
+    ", []).unwrap()
+    
+    db.execute("
+        CREATE TABLE IF NOT EXISTS packages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT,
+            version TEXT,
+            description TEXT,
+            author TEXT,
+            repository TEXT,
+            license TEXT,
+            homepage TEXT,
+            keywords TEXT,
+            files TEXT,
+            checksum TEXT,
+            published_at INTEGER,
+            downloads INTEGER DEFAULT 0,
+            UNIQUE(name, version)
+        )
+    ", []).unwrap()
+    
+    db.execute("
+        CREATE TABLE IF NOT EXISTS downloads (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            package_id INTEGER,
+            version TEXT,
+            downloaded_at INTEGER
+        )
+    ", []).unwrap()
+    
+    // Create storage directory
+    if !fs.file_exists(STORAGE_DIR) {
+        fs.create_dir(STORAGE_DIR)
+    }
+}
+
+fn get_user_by_api_key(api_key: string) -> Option[User] {
+    let rows = db.query("SELECT * FROM users WHERE api_key = ?", [api_key]).unwrap()
+    
+    if rows.data.len == 0 {
+        return Option[User].None
+    }
+    
+    let row = rows.data[0]
+    return Option[User].Some(User {
+        id: row[0],
+        username: row[1],
+        email: row[2],
+        api_key: row[3]
+    })
+}
+
+fn publish_package(pkg: PackageInfo, files: dict) -> Result[string, string] {
+    // Check if package version already exists
+    let existing = db.query(
+        "SELECT id FROM packages WHERE name = ? AND version = ?",
+        [pkg.name, pkg.version]
+    ).unwrap()
+    
+    if existing.data.len > 0 {
+        return Result[string, string].Err("Package version already exists")
+    }
+    
+    // Store package files
+    let pkg_dir = STORAGE_DIR + "\\" + pkg.name + "\\" + pkg.version
+    fs.create_dir(pkg_dir)
+    
+    for (filename, content) in files {
+        let path = pkg_dir + "\\" + filename
+        fs.write_file(path, content)
+    }
+    
+    // Insert into database
+    let keywords_json = json.stringify(json.array(pkg.keywords.map(k => json.string(k)))).unwrap()
+    let files_json = json.stringify(json.array(pkg.files.map(f => json.string(f)))).unwrap()
+    
+    db.execute(
+        "INSERT INTO packages (name, version, description, author, repository, license, homepage, keywords, files, checksum, published_at, downloads) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [pkg.name, pkg.version, pkg.description, pkg.author, pkg.repository, pkg.license, pkg.homepage, keywords_json, files_json, pkg.checksum, time.now().seconds, 0]
+    ).unwrap()
+    
+    return Result[string, string].Ok("Package published successfully")
+}
+
+fn download_package(name: string, version: string) -> Result[PackageInfo, string] {
+    let rows = db.query(
+        "SELECT * FROM packages WHERE name = ? AND version = ?",
+        [name, version]
+    ).unwrap()
+    
+    if rows.data.len == 0 {
+        return Result[PackageInfo, string].Err("Package not found")
+    }
+    
+    let row = rows.data[0]
+    let pkg = PackageInfo {
+        name: row[1],
+        version: row[2],
+        description: row[3],
+        author: row[4],
+        repository: row[5],
+        license: row[6],
+        homepage: row[7],
+        keywords: [],
+        files: [],
+        checksum: row[10],
+        published_at: time.Timestamp { seconds: row[11], nanos: 0 },
+        downloads: row[12]
+    }
+    
+    // Increment download count
+    db.execute(
+        "UPDATE packages SET downloads = downloads + 1 WHERE name = ? AND version = ?",
+        [name, version]
+    ).unwrap()
+    
+    // Log download
+    db.execute(
+        "INSERT INTO downloads (package_id, version, downloaded_at) VALUES (?, ?, ?)",
+        [row[0], version, time.now().seconds]
+    ).unwrap()
+    
+    return Result[PackageInfo, string].Ok(pkg)
+}
+
+fn list_packages(query: string) -> [PackageInfo] {
+    let sql = if query.is_empty() {
+        "SELECT * FROM packages ORDER BY downloads DESC"
+    } else {
+        "SELECT * FROM packages WHERE name LIKE ? OR description LIKE ? ORDER BY downloads DESC"
+    }
+    
+    let params = if query.is_empty() { [] } else { ["%" + query + "%", "%" + query + "%"] }
+    let rows = db.query(sql, params).unwrap()
+    
+    let packages = []
+    for row in rows.data {
+        packages.push(PackageInfo {
+            name: row[1],
+            version: row[2],
+            description: row[3],
+            author: row[4],
+            repository: row[5],
+            license: row[6],
+            homepage: row[7],
+            keywords: [],
+            files: [],
+            checksum: row[10],
+            published_at: time.Timestamp { seconds: row[11], nanos: 0 },
+            downloads: row[12]
+        })
+    }
+    
+    return packages
+}
+
+fn get_package_versions(name: string) -> [string] {
+    let rows = db.query(
+        "SELECT version FROM packages WHERE name = ? ORDER BY published_at DESC",
+        [name]
+    ).unwrap()
+    
+    let versions = []
+    for row in rows.data {
+        versions.push(row[0])
+    }
+    
+    return versions
+}
+
+fn resolve_dependencies(deps: dict) -> dict {
+    let resolved = dict()
+    
+    for (name, version_constraint) in deps {
+        // Simple version resolution (in real implementation, use semver)
+        let versions = get_package_versions(name)
+        if versions.len > 0 {
+            resolved[name] = versions[0]
+        }
+    }
+    
+    return resolved
+}
+
+fn handle_upload(req: net.Request) -> net.Response {
+    let api_key = req.headers.get("X-API-Key", "")
+    let user = get_user_by_api_key(api_key)
+    
+    match user {
+        Option[User].None => {
+            return net.Response {
+                status: 401,
+                headers: { "Content-Type": "application/json" },
+                body: json.stringify(json.object([("error", json.string("Invalid API key"))])).unwrap()
+            }
+        }
+        Option[User].Some(u) => {
+            let data = json.parse(req.body).unwrap()
+            
+            let pkg = PackageInfo {
+                name: data.data.get("name").unwrap().data,
+                version: data.data.get("version").unwrap().data,
+                description: data.data.get("description").unwrap().data,
+                author: u.username,
+                repository: data.data.get("repository", "").data,
+                license: data.data.get("license", "MIT").data,
+                homepage: data.data.get("homepage", "").data,
+                keywords: [],
+                files: [],
+                checksum: data.data.get("checksum").unwrap().data,
+                published_at: time.now(),
+                downloads: 0
+            }
+            
+            let files = data.data.get("files").unwrap().data
+            let result = publish_package(pkg, files)
+            
+            match result {
+                Result[string, string].Ok(msg) => {
+                    return net.Response {
+                        status: 200,
+                        headers: { "Content-Type": "application/json" },
+                        body: json.stringify(json.object([("success", json.boolean(true)), ("message", json.string(msg))])).unwrap()
+                    }
+                }
+                Result[string, string].Err(err) => {
+                    return net.Response {
+                        status: 400,
+                        headers: { "Content-Type": "application/json" },
+                        body: json.stringify(json.object([("error", json.string(err))])).unwrap()
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn handle_download(req: net.Request) -> net.Response {
+    let path_parts = req.url.split("/")
+    if path_parts.len < 3 {
+        return net.Response {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+            body: json.stringify(json.object([("error", json.string("Invalid request"))])).unwrap()
+        }
+    }
+    
+    let name = path_parts[1]
+    let version = path_parts[2]
+    
+    let result = download_package(name, version)
+    
+    match result {
+        Result[PackageInfo, string].Ok(pkg) => {
+            let pkg_dir = STORAGE_DIR + "\\" + pkg.name + "\\" + pkg.version
+            
+            // Create tarball (simplified - in real implementation, use proper archiving)
+            let files = fs.list_dir(pkg_dir)
+            let file_contents = dict()
+            for file in files {
+                file_contents[file] = fs.read_file(pkg_dir + "\\" + file)
+            }
+            
+            return net.Response {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+                body: json.stringify(json.object([
+                    ("name", json.string(pkg.name)),
+                    ("version", json.string(pkg.version)),
+                    ("files", json.object(file_contents))
+                ])).unwrap()
+            }
+        }
+        Result[PackageInfo, string].Err(err) => {
+            return net.Response {
+                status: 404,
+                headers: { "Content-Type": "application/json" },
+                body: json.stringify(json.object([("error", json.string(err))])).unwrap()
+            }
+        }
+    }
+}
+
+fn handle_search(req: net.Request) -> net.Response {
+    let query = ""
+    if req.url.contains("?q=") {
+        query = req.url.split("?q=")[1]
+    }
+    
+    let packages = list_packages(query)
+    
+    let packages_json = []
+    for pkg in packages {
+        packages_json.push(json.object([
+            ("name", json.string(pkg.name)),
+            ("version", json.string(pkg.version)),
+            ("description", json.string(pkg.description)),
+            ("author", json.string(pkg.author)),
+            ("downloads", json.number(pkg.downloads))
+        ]))
+    }
+    
+    return net.Response {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+        body: json.stringify(json.array(packages_json)).unwrap()
+    }
+}
+
+fn handle_versions(req: net.Request) -> net.Response {
+    let name = req.url.split("/")[1]
+    let versions = get_package_versions(name)
+    
+    let versions_json = versions.map(v => json.string(v))
+    
+    return net.Response {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+        body: json.stringify(json.array(versions_json)).unwrap()
+    }
+}
+
+fn main() {
+    println("=== SEED Package Registry ===")
+    println("Porta: " + PORT.to_string())
+    println("Banco de dados: " + DB_PATH)
+    println("Armazenamento: " + STORAGE_DIR)
+    println("")
+    
+    init_db()
+    
+    net.serve(PORT, fn(req: net.Request) -> net.Response {
+        let path = req.url.split("?")[0]
+        
+        match req.method {
+            "POST" => {
+                if path == "/upload" {
+                    return handle_upload(req)
+                }
+            }
+            "GET" => {
+                if path == "/search" {
+                    return handle_search(req)
+                } else if path.starts_with("/download/") {
+                    return handle_download(req)
+                } else if path.contains("/versions") {
+                    return handle_versions(req)
+                } else if path == "/" {
+                    return net.Response {
+                        status: 200,
+                        headers: { "Content-Type": "text/html" },
+                        body: "<h1>SEED Package Registry</h1><p>API endpoints: /upload, /download/:name/:version, /search, /:name/versions</p>"
+                    }
+                }
+            }
+        }
+        
+        return net.Response {
+            status: 404,
+            headers: { "Content-Type": "application/json" },
+            body: json.stringify(json.object([("error", json.string("Not found"))])).unwrap()
+        }
+    })
+}

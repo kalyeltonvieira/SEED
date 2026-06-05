@@ -1,0 +1,76 @@
+module stdlib.postgres
+
+/// PostgreSQL database module
+
+pub type Postgres = {
+    host: string,
+    port: int,
+    database: string,
+    user: string,
+    password: string
+}
+
+pub type PostgresResult = {
+    columns: [string],
+    rows: [[string]]
+}
+
+pub fn connect(host: string, port: int, database: string, user: string, password: string) -> Result<Postgres, string> {
+    return syscall.postgres_connect(host, port, database, user, password)
+}
+
+pub fn close(conn: Postgres) -> Result<void, string> {
+    return syscall.postgres_close(conn)
+}
+
+pub fn execute(conn: Postgres, sql: string) -> Result<void, string> {
+    return syscall.postgres_execute(conn, sql)
+}
+
+pub fn query(conn: Postgres, sql: string) -> Result<PostgresResult, string> {
+    return syscall.postgres_query(conn, sql)
+}
+
+pub fn prepare(conn: Postgres, sql: string) -> Result<PostgresStatement, string> {
+    return syscall.postgres_prepare(conn, sql)
+}
+
+pub type PostgresStatement = {
+    stmt: int
+}
+
+pub fn bind(stmt: PostgresStatement, params: [string]) -> Result<void, string> {
+    return syscall.postgres_bind(stmt, params)
+}
+
+pub fn step(stmt: PostgresStatement) -> Result<bool, string> {
+    return syscall.postgres_step(stmt)
+}
+
+pub fn reset(stmt: PostgresStatement) -> Result<void, string> {
+    return syscall.postgres_reset(stmt)
+}
+
+pub fn finalize(stmt: PostgresStatement) -> Result<void, string> {
+    return syscall.postgres_finalize(stmt)
+}
+
+pub fn begin_transaction(conn: Postgres) -> Result<void, string> {
+    return execute(conn, "BEGIN")
+}
+
+pub fn commit(conn: Postgres) -> Result<void, string> {
+    return execute(conn, "COMMIT")
+}
+
+pub fn rollback(conn: Postgres) -> Result<void, string> {
+    return execute(conn, "ROLLBACK")
+}
+
+pub fn escape_literal(conn: Postgres, s: string) -> string {
+    return syscall.postgres_escape_literal(conn, s)
+}
+
+pub fn escape_identifier(conn: Postgres, s: string) -> string {
+    return syscall.postgres_escape_identifier(conn, s)
+}

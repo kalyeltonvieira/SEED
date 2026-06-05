@@ -1,0 +1,461 @@
+module tiny_os
+
+/// TinyOS - Sistema Operacional Mínimo
+/// Process scheduler, virtual filesystem, shell, memory manager, IPC, VT100 terminal
+
+type Process = {
+    pid: int
+    name: string
+    state: string
+    priority: int
+    memory: [int]
+    stack: [int]
+    pc: int
+    registers: dict
+}
+
+type ProcessScheduler = {
+    processes: [Process]
+    current_process: Option[Process]
+    quantum: int
+    algorithm: string
+}
+
+type VirtualFile = {
+    name: string
+    type: string
+    content: string
+    permissions: dict
+    owner: string
+    created_at: time.Timestamp
+}
+
+type VirtualFS = {
+    root: VirtualFile
+    current_path: string
+}
+
+type MemoryManager = {
+    heap: [int]
+    allocated: dict
+    free_blocks: [int]
+}
+
+type User = {
+    name: string
+    uid: int
+    gid: int
+    home: string
+}
+
+type Message = {
+    from: int
+    to: int
+    data: string
+    timestamp: time.Timestamp
+}
+
+type IPC = {
+    messages: [Message]
+    queues: dict
+}
+
+type Terminal = {
+    buffer: string
+    cursor: int
+    width: int
+    height: int
+    vt100_mode: bool
+}
+
+type TinyOS = {
+    scheduler: ProcessScheduler
+    fs: VirtualFS
+    memory: MemoryManager
+    users: [User]
+    ipc: IPC
+    terminals: [Terminal]
+    current_user: User
+    running: bool
+}
+
+// Process Scheduler
+fn scheduler(algorithm: string) -> ProcessScheduler {
+    return ProcessScheduler {
+        processes: [],
+        current_process: Option[Process].None,
+        quantum: 10,
+        algorithm: algorithm
+    }
+}
+
+fn create_process(sched: ProcessScheduler, name: string, fn: fn()) -> Process {
+    let process = Process {
+        pid: sched.processes.len + 1,
+        name: name,
+        state: "ready",
+        priority: 0,
+        memory: [],
+        stack: [],
+        pc: 0,
+        registers: dict()
+    }
+    
+    sched.processes.push(process)
+    return process
+}
+
+fn schedule(sched: ProcessScheduler) {
+    match sched.algorithm {
+        "round_robin" => round_robin_schedule(sched)
+        "priority" => priority_schedule(sched)
+        _ => round_robin_schedule(sched)
+    }
+}
+
+fn round_robin_schedule(sched: ProcessScheduler) {
+    let ready = sched.processes.filter(p => p.state == "ready")
+    
+    if ready.len == 0 {
+        sched.current_process = Option[Process].None
+        return
+    }
+    
+    let current = sched.current_process
+    if current != null {
+        current.state = "ready"
+    }
+    
+    let next = ready[0]
+    next.state = "running"
+    sched.current_process = Option[Process].Some(next)
+}
+
+fn priority_schedule(sched: ProcessScheduler) {
+    let ready = sched.processes.filter(p => p.state == "ready")
+    
+    if ready.len == 0 {
+        sched.current_process = Option[Process].None
+        return
+    }
+    
+    let sorted = ready.sort((a, b) => a.priority - b.priority)
+    let next = sorted[0]
+    next.state = "running"
+    sched.current_process = Option[Process].Some(next)
+}
+
+fn kill_process(sched: ProcessScheduler, pid: int) {
+    for i in 0..sched.processes.len {
+        if sched.processes[i].pid == pid {
+            sched.processes.remove(i)
+            break
+        }
+    }
+}
+
+fn list_processes(sched: ProcessScheduler) -> [[string]] {
+    let rows = []
+    rows.push(["PID", "NOME", "ESTADO"])
+    
+    for proc in sched.processes {
+        rows.push([proc.pid.to_string(), proc.name, proc.state])
+    }
+    
+    return rows
+}
+
+// Virtual Filesystem
+fn virtual_fs() -> VirtualFS {
+    return VirtualFS {
+        root: VirtualFile {
+            name: "/",
+            type: "directory",
+            content: "",
+            permissions: dict([("read", true), ("write", true), ("execute", true)]),
+            owner: "root",
+            created_at: time.now()
+        },
+        current_path: "/"
+    }
+}
+
+fn create_file(fs: VirtualFS, name: string, content: string) {
+    let file = VirtualFile {
+        name: name,
+        type: "file",
+        content: content,
+        permissions: dict([("read", true), ("write", true)]),
+        owner: fs.current_user.name,
+        created_at: time.now()
+    }
+    
+    // Add to current directory (simplified)
+    fs.root.content = fs.root.content + name + "\n"
+}
+
+fn read_file(fs: VirtualFS, path: string) -> string {
+    // Simplified - return content if exists
+    return "Conteúdo do arquivo"
+}
+
+fn write_file(fs: VirtualFS, path: string, content: string) {
+    // Simplified
+}
+
+fn delete_file(fs: VirtualFS, path: string) {
+    // Simplified
+}
+
+fn list_directory(fs: VirtualFS) -> [string] {
+    return fs.root.content.split("\n").filter(s => s.len > 0)
+}
+
+fn change_directory(fs: VirtualFS, path: string) {
+    if path == "/" {
+        fs.current_path = "/"
+    } else if path == ".." {
+        let parts = fs.current_path.split("/")
+        if parts.len > 1 {
+            fs.current_path = parts.slice(0, parts.len - 1).join("/")
+        }
+    } else {
+        fs.current_path = fs.current_path + "/" + path
+    }
+}
+
+// Memory Manager
+fn memory_manager(size: int) -> MemoryManager {
+    let heap = []
+    for i in 0..size {
+        heap.push(0)
+    }
+    
+    return MemoryManager {
+        heap: heap,
+        allocated: dict(),
+        free_blocks: [0, size]
+    }
+}
+
+fn allocate(mem: MemoryManager, size: int) -> int {
+    for i in 0..mem.free_blocks.len {
+        let block = mem.free_blocks[i]
+        if block >= size {
+            mem.free_blocks.remove(i)
+            mem.allocated[block.to_string()] = size
+            return block
+        }
+    }
+    return -1
+}
+
+fn free(mem: MemoryManager, address: int) {
+    if mem.allocated.contains(address.to_string()) {
+        let size = mem.allocated[address.to_string()]
+        mem.allocated.remove(address.to_string())
+        mem.free_blocks.push(address)
+    }
+}
+
+// IPC
+fn ipc() -> IPC {
+    return IPC {
+        messages: [],
+        queues: dict()
+    }
+}
+
+fn send_message(ipc: IPC, from: int, to: int, data: string) {
+    let msg = Message {
+        from: from,
+        to: to,
+        data: data,
+        timestamp: time.now()
+    }
+    
+    ipc.messages.push(msg)
+    
+    if !ipc.queues.contains(to.to_string()) {
+        ipc.queues[to.to_string()] = []
+    }
+    ipc.queues[to.to_string()].push(msg)
+}
+
+fn receive_message(ipc: IPC, pid: int) -> Option[Message] {
+    if ipc.queues.contains(pid.to_string()) {
+        let queue = ipc.queues[pid.to_string()]
+        if queue.len > 0 {
+            return Option[Message].Some(queue.pop())
+        }
+    }
+    return Option[Message].None
+}
+
+// Terminal
+fn terminal(width: int, height: int) -> Terminal {
+    return Terminal {
+        buffer: "",
+        cursor: 0,
+        width: width,
+        height: height,
+        vt100_mode: true
+    }
+}
+
+fn write_term(term: Terminal, text: string) {
+    term.buffer = term.buffer + text
+    term.cursor = term.cursor + text.len()
+}
+
+fn clear_term(term: Terminal) {
+    term.buffer = ""
+    term.cursor = 0
+}
+
+fn render_term(term: Terminal) -> string {
+    let output = term.buffer
+    
+    if term.vt100_mode {
+        output = "\033[2J\033[H" + output // Clear screen and move cursor
+    }
+    
+    return output
+}
+
+// Shell
+type Shell = {
+    os: TinyOS
+    history: [string]
+    env: dict
+}
+
+fn shell(os: TinyOS) -> Shell {
+    return Shell {
+        os: os,
+        history: [],
+        env: dict([
+            ("PATH", "/bin:/usr/bin"),
+            ("HOME", "/root"),
+            ("USER", "root")
+        ])
+    }
+}
+
+fn execute_command(shell: Shell, command: string) {
+    let parts = command.split(" ")
+    let cmd = parts[0]
+    let args = parts.slice(1, parts.len)
+    
+    match cmd {
+        "help" => print_help()
+        "ls" => list_directory(shell.os.fs)
+        "cd" => change_directory(shell.os.fs, args[0])
+        "mkdir" => create_directory(shell.os.fs, args[0])
+        "touch" => create_file(shell.os.fs, args[0], "")
+        "cat" => println(read_file(shell.os.fs, args[0]))
+        "echo" => println(args.join(" "))
+        "ps" => print_processes(shell.os.scheduler)
+        "kill" => kill_process(shell.os.scheduler, args[0].to_int())
+        "executar" => execute_program(shell.os, args[0])
+        "boot" => boot(shell.os)
+        "shutdown" => shutdown(shell.os)
+        _ => println("Comando desconhecido: " + cmd)
+    }
+}
+
+fn print_help() {
+    println("Comandos disponíveis:")
+    println("  help          - Mostra esta ajuda")
+    println("  ls            - Lista diretório")
+    println("  cd <dir>      - Muda diretório")
+    println("  mkdir <dir>   - Cria diretório")
+    println("  touch <file>  - Cria arquivo")
+    println("  cat <file>    - Mostra conteúdo")
+    println("  echo <text>   - Imprime texto")
+    println("  ps            - Lista processos")
+    println("  kill <pid>    - Mata processo")
+    println("  executar <prog> - Executa programa")
+    println("  boot          - Inicia OS")
+    println("  shutdown      - Desliga OS")
+}
+
+fn create_directory(fs: VirtualFS, name: string) {
+    println("Diretório '" + name + "' criado.")
+}
+
+fn print_processes(sched: ProcessScheduler) {
+    let rows = list_processes(sched)
+    for row in rows {
+        println(row.join("  "))
+    }
+}
+
+fn execute_program(os: TinyOS, program: string) {
+    let process = create_process(os.scheduler, program, fn() {})
+    println("Executando " + program + " como processo " + process.pid.to_string())
+}
+
+// TinyOS
+fn tiny_os() -> TinyOS {
+    return TinyOS {
+        scheduler: scheduler("round_robin"),
+        fs: virtual_fs(),
+        memory: memory_manager(1024),
+        users: [User { name: "root", uid: 0, gid: 0, home: "/root" }],
+        ipc: ipc(),
+        terminals: [terminal(80, 24)],
+        current_user: User { name: "root", uid: 0, gid: 0, home: "/root" },
+        running: true
+    }
+}
+
+fn boot(os: TinyOS) {
+    println("TinyOS 1.0 iniciando...")
+    println("Carregando kernel...")
+    println("Montando filesystem virtual...")
+    println("Iniciando scheduler de processos...")
+    println("Inicializando IPC...")
+    println("Pronto.")
+    println("")
+}
+
+fn shutdown(os: TinyOS) {
+    println("Desligando TinyOS...")
+    os.running = false
+}
+
+fn run(os: TinyOS) {
+    boot(os)
+    
+    let sh = shell(os)
+    let term = os.terminals[0]
+    
+    while os.running {
+        print(os.fs.current_path + " $ ")
+        let input = io.read_line()
+        
+        if input == "exit" {
+            break
+        }
+        
+        if input.len > 0 {
+            sh.history.push(input)
+            execute_command(sh, input)
+        }
+    }
+    
+    shutdown(os)
+}
+
+// Main
+fn main() {
+    println("=== TINY OS v1.0 ===")
+    println("Sistema Operacional Mínimo em SEED")
+    println("")
+    
+    let os = tiny_os()
+    run(os)
+    
+    println("TinyOS encerrado.")
+}

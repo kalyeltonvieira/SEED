@@ -1,0 +1,65 @@
+module stdlib.locale
+
+/// Locale and internationalization module
+
+pub type Locale = {
+    language: string,
+    country: string,
+    variant: string
+}
+
+pub fn locale(language: string, country: string) -> Locale {
+    return Locale { language: language, country: country, variant: "" }
+}
+
+pub fn current() -> Locale {
+    return syscall.locale_current()
+}
+
+pub fn set_current(loc: Locale) {
+    syscall.locale_set_current(loc)
+}
+
+pub fn format_number(n: float, loc: Locale) -> string {
+    return syscall.locale_format_number(n, loc)
+}
+
+pub fn format_currency(amount: float, currency: string, loc: Locale) -> string {
+    return syscall.locale_format_currency(amount, currency, loc)
+}
+
+pub fn format_percent(n: float, loc: Locale) -> string {
+    return syscall.locale_format_percent(n, loc)
+}
+
+pub fn format_date(dt: DateTime, fmt: string, loc: Locale) -> string {
+    return syscall.locale_format_date(dt, fmt, loc)
+}
+
+pub fn format_time(dt: DateTime, fmt: string, loc: Locale) -> string {
+    return syscall.locale_format_time(dt, fmt, loc)
+}
+
+pub fn parse_number(s: string, loc: Locale) -> Result<float, string> {
+    return syscall.locale_parse_number(s, loc)
+}
+
+pub fn parse_currency(s: string, loc: Locale) -> Result<float, string> {
+    return syscall.locale_parse_currency(s, loc)
+}
+
+pub fn parse_date(s: string, fmt: string, loc: Locale) -> Result<DateTime, string> {
+    return syscall.locale_parse_date(s, fmt, loc)
+}
+
+pub fn to_string(loc: Locale) -> string {
+    return loc.language + "_" + loc.country
+}
+
+pub fn from_string(s: string) -> Locale {
+    let parts = s.split("_")
+    if parts.len >= 2 {
+        return Locale { language: parts[0], country: parts[1], variant: "" }
+    }
+    return Locale { language: s, country: "", variant: "" }
+}

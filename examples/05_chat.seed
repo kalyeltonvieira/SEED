@@ -1,0 +1,122 @@
+module chat
+
+import stdlib.io
+import stdlib.net
+import stdlib.string
+
+/// Chat em tempo real via WebSocket
+type Client = {
+    id: string
+    name: string
+    ws: net.WebSocket
+}
+
+let clients = List[Client]()
+
+fn main() {
+    let port = 9000
+    
+    println("=== Chat Server SEED ===")
+    println("Porta: " + port.to_string())
+    println("")
+    
+    // WebSocket server
+    let ws_url = "ws://localhost:" + port.to_string()
+    
+    // Handle new connections
+    net.serve(port, fn(req: net.Request) -> net.Response {
+        if req.url == "/ws" {
+            // Upgrade to WebSocket
+            let ws = net.connect(ws_url)
+            let client_id = crypto.uuid()
+            
+            let client = Client {
+                id: client_id,
+                name: "Guest" + client_id.substring(0, 8),
+                ws: ws
+            }
+            
+            clients.push(client)
+            
+            // Broadcast join message
+            broadcast(client.name + " entrou no chat", client_id)
+            
+            // Handle messages
+            ws.on_message(fn(msg: string) {
+                handle_message(client, msg)
+            })
+            
+            return net.Response {
+                status: 101,
+                headers: { "Upgrade": "websocket" },
+                body: ""
+            }
+        }
+        
+        // Serve chat interface
+        return net.Response {
+            status: 200,
+            headers: { "Content-Type": "text/html" },
+            body: get_chat_html()
+        }
+    })
+}
+
+fn handle_message(client: Client, msg: string) {
+    if msg.starts_with("/name ") {
+        let new_name = msg.substring(6, msg.len())
+        broadcast(client.name + " agora é " + new_name, client.id)
+        client.name = new_name
+    } else if msg == "/quit" {
+        broadcast(client.name + " saiu do chat", client.id)
+        client.ws.close()
+        clients.remove(clients.index_of(client).unwrap())
+    } else {
+        broadcast(client.name + ": " + msg, client.id)
+    }
+}
+
+fn broadcast(msg: string, exclude_id: string) {
+    println(msg)
+    for client in clients {
+        if client.id != exclude_id {
+            client.ws.send(msg)
+        }
+    }
+}
+
+fn get_chat_html() -> string {
+    return "<!DOCTYPE html>
+<html>
+<head>
+    <title>SEED Chat</title>
+    <style>
+        body { font-family: Arial; max-width: 800px; margin: 50px auto; }
+        #messages { height: 400px; overflow-y: scroll; border: 1px solid #ccc; padding: 10px; }
+        #input { width: 70%; }
+        button { width: 25%; }
+    </style>
+</head>
+<body>
+    <h1>Chat SEED</h1>
+    <div id='messages'></div>
+    <input id='input' placeholder='Mensagem...' />
+    <button onclick='send()'>Enviar</button>
+    
+    <script>
+        let ws = new WebSocket('ws://localhost:9000/ws');
+        ws.onmessage = e => {
+            let div = document.createElement('div');
+            div.textContent = e.data;
+            document.getElementById('messages').appendChild(div);
+        };
+        
+        function send() {
+            let input = document.getElementById('input');
+            ws.send(input.value);
+            input.value = '';
+        }
+    </script>
+</body>
+</html>"
+}

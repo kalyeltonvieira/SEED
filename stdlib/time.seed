@@ -1,0 +1,80 @@
+module stdlib.time
+
+type Timestamp = {
+    seconds: int
+    nanos: int
+}
+
+type Duration = {
+    seconds: int
+    nanos: int
+}
+
+/// Agora
+fn now() -> Timestamp {
+    return syscall.time_now()
+}
+
+/// Agora em UTC
+fn now_utc() -> Timestamp {
+    return syscall.time_now_utc()
+}
+
+/// Dorme milissegundos
+fn sleep(ms: int) {
+    syscall.time_sleep(ms)
+}
+
+/// Formata data
+fn format(ts: Timestamp, fmt: string) -> string {
+    return syscall.time_format(ts, fmt)
+}
+
+/// Interpreta data
+fn parse(s: string, fmt: string) -> Timestamp {
+    return syscall.time_parse(s, fmt)
+}
+
+/// Tempo decorrido
+fn elapsed(ts: Timestamp) -> Duration {
+    let now = now()
+    let secs = now.seconds - ts.seconds
+    let nanos = now.nanos - ts.nanos
+    if nanos < 0 {
+        secs = secs - 1
+        nanos = nanos + 1000000000
+    }
+    return Duration(secs, nanos)
+}
+
+/// Adiciona duração
+fn add(ts: Timestamp, dur: Duration) -> Timestamp {
+    let secs = ts.seconds + dur.seconds
+    let nanos = ts.nanos + dur.nanos
+    if nanos >= 1000000000 {
+        secs = secs + 1
+        nanos = nanos - 1000000000
+    }
+    return Timestamp(secs, nanos)
+}
+
+/// Subtrai duração
+fn sub(ts: Timestamp, dur: Duration) -> Timestamp {
+    let secs = ts.seconds - dur.seconds
+    let nanos = ts.nanos - dur.nanos
+    if nanos < 0 {
+        secs = secs - 1
+        nanos = nanos + 1000000000
+    }
+    return Timestamp(secs, nanos)
+}
+
+/// Converte duração para milissegundos
+fn to_millis(dur: Duration) -> int {
+    return dur.seconds * 1000 + dur.nanos / 1000000
+}
+
+/// Converte duração para segundos
+fn to_seconds(dur: Duration) -> float {
+    return dur.seconds + dur.nanos / 1000000000.0
+}

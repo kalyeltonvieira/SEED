@@ -1,0 +1,151 @@
+module stdlib.statistics
+
+/// Statistical functions module
+
+pub fn mean(data: [float]) -> float {
+    if data.len == 0 { return 0.0 }
+    let sum = 0.0
+    for x in data { sum = sum + x }
+    return sum / data.len
+}
+
+pub fn median(data: [float]) -> float {
+    if data.len == 0 { return 0.0 }
+    let sorted = data.sort()
+    let n = sorted.len
+    if n % 2 == 0 {
+        return (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
+    }
+    return sorted[n / 2]
+}
+
+pub fn mode(data: [float]) -> [float] {
+    if data.len == 0 { return [] }
+    let counts = {}
+    for x in data {
+        if counts.contains(x) {
+            counts[x] = counts[x] + 1
+        } else {
+            counts[x] = 1
+        }
+    }
+    let max_count = 0
+    for (_, count) in counts {
+        if count > max_count { max_count = count }
+    }
+    let result = []
+    for (value, count) in counts {
+        if count == max_count { result.push(value) }
+    }
+    return result
+}
+
+pub fn variance(data: [float]) -> float {
+    let m = mean(data)
+    let sum_sq = 0.0
+    for x in data { sum_sq = sum_sq + (x - m) * (x - m) }
+    return sum_sq / data.len
+}
+
+pub fn std_dev(data: [float]) -> float {
+    return math.sqrt(variance(data))
+}
+
+pub fn min(data: [float]) -> float {
+    if data.len == 0 { return 0.0 }
+    let result = data[0]
+    for x in data { if x < result { result = x } }
+    return result
+}
+
+pub fn max(data: [float]) -> float {
+    if data.len == 0 { return 0.0 }
+    let result = data[0]
+    for x in data { if x > result { result = x } }
+    return result
+}
+
+pub fn range(data: [float]) -> float {
+    return max(data) - min(data)
+}
+
+pub fn sum(data: [float]) -> float {
+    let result = 0.0
+    for x in data { result = result + x }
+    return result
+}
+
+pub fn product(data: [float]) -> float {
+    if data.len == 0 { return 0.0 }
+    let result = 1.0
+    for x in data { result = result * x }
+    return result
+}
+
+pub fn percentile(data: [float], p: float) -> float {
+    if data.len == 0 { return 0.0 }
+    let sorted = data.sort()
+    let n = sorted.len
+    let index = (p / 100.0) * (n - 1)
+    let lower = index.floor()
+    let upper = index.ceil()
+    if lower == upper { return sorted[lower] }
+    let weight = index - lower
+    return sorted[lower] * (1.0 - weight) + sorted[upper] * weight
+}
+
+pub fn quartile(data: [float], q: int) -> float {
+    // q: 1 = Q1 (25%), 2 = Q2 (50% = median), 3 = Q3 (75%)
+    return percentile(data, q * 25.0)
+}
+
+pub fn iqr(data: [float]) -> float {
+    return quartile(data, 3) - quartile(data, 1)
+}
+
+pub fn skewness(data: [float]) -> float {
+    let m = mean(data)
+    let s = std_dev(data)
+    if s == 0.0 { return 0.0 }
+    let n = data.len
+    let sum = 0.0
+    for x in data { sum = sum + ((x - m) / s) ^ 3 }
+    return sum / n
+}
+
+pub fn kurtosis(data: [float]) -> float {
+    let m = mean(data)
+    let s = std_dev(data)
+    if s == 0.0 { return 0.0 }
+    let n = data.len
+    let sum = 0.0
+    for x in data { sum = sum + ((x - m) / s) ^ 4 }
+    return (sum / n) - 3.0
+}
+
+pub fn correlation(x: [float], y: [float]) -> float {
+    let n = x.len
+    if n != y.len || n == 0 { return 0.0 }
+    let mx = mean(x)
+    let my = mean(y)
+    let sx = std_dev(x)
+    let sy = std_dev(y)
+    if sx == 0.0 || sy == 0.0 { return 0.0 }
+    let sum = 0.0
+    for i in 0..n {
+        sum = sum + (x[i] - mx) * (y[i] - my)
+    }
+    return sum / (n * sx * sy)
+}
+
+pub fn covariance(x: [float], y: [float]) -> float {
+    let n = x.len
+    if n != y.len || n == 0 { return 0.0 }
+    let mx = mean(x)
+    let my = mean(y)
+    let sum = 0.0
+    for i in 0..n {
+        sum = sum + (x[i] - mx) * (y[i] - my)
+    }
+    return sum / n
+}

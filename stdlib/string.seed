@@ -1,0 +1,112 @@
+module stdlib.string
+
+/// String manipulation module
+
+pub fn len(s: string) -> int {
+    return s.len
+}
+
+pub fn is_empty(s: string) -> bool {
+    return s.len == 0
+}
+
+pub fn concat(a: string, b: string) -> string {
+    return a + b
+}
+
+pub fn split(s: string, delim: string) -> [string] {
+    return syscall.string_split(s, delim)
+}
+
+pub fn join(parts: [string], delim: string) -> string {
+    let result = ""
+    for i in 0..parts.len {
+        result = result + parts[i]
+        if i < parts.len - 1 { result = result + delim }
+    }
+    return result
+}
+
+pub fn replace(s: string, old: string, new: string) -> string {
+    return syscall.string_replace(s, old, new)
+}
+
+pub fn to_upper(s: string) -> string {
+    return syscall.string_to_upper(s)
+}
+
+pub fn to_lower(s: string) -> string {
+    return syscall.string_to_lower(s)
+}
+
+pub fn trim(s: string) -> string {
+    return syscall.string_trim(s)
+}
+
+pub fn trim_start(s: string) -> string {
+    return syscall.string_trim_start(s)
+}
+
+pub fn trim_end(s: string) -> string {
+    return syscall.string_trim_end(s)
+}
+
+pub fn contains(s: string, sub: string) -> bool {
+    return syscall.string_contains(s, sub)
+}
+
+pub fn starts_with(s: string, prefix: string) -> bool {
+    return syscall.string_starts_with(s, prefix)
+}
+
+pub fn ends_with(s: string, suffix: string) -> bool {
+    return syscall.string_ends_with(s, suffix)
+}
+
+pub fn index_of(s: string, sub: string) -> int {
+    return syscall.string_index_of(s, sub)
+}
+
+pub fn last_index_of(s: string, sub: string) -> int {
+    return syscall.string_last_index_of(s, sub)
+}
+
+pub fn substring(s: string, start: int, end: int) -> string {
+    return syscall.string_substring(s, start, end)
+}
+
+pub fn char_at(s: string, index: int) -> string {
+    return syscall.string_char_at(s, index)
+}
+
+pub fn reverse(s: string) -> string {
+    return syscall.string_reverse(s)
+}
+
+pub fn repeat(s: string, n: int) -> string {
+    let result = ""
+    for i in 0..n { result = result + s }
+    return result
+}
+
+pub fn format(template: string, args: dict) -> string {
+    let result = template
+    for (key, value) in args {
+        result = replace(result, "{" + key + "}", to_string(value))
+    }
+    return result
+}
+
+pub fn count(s: string, sub: string) -> int {
+    let count = 0
+    let i = 0
+    while i < s.len {
+        if substring(s, i, i + sub.len) == sub {
+            count = count + 1
+            i = i + sub.len
+        } else {
+            i = i + 1
+        }
+    }
+    return count
+}

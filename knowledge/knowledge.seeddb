@@ -1,0 +1,14 @@
+SEED-KNOWLEDGE-DB v0
+
+[algoritmos]
+sort.timsort | ordenar lista parcialmente ordenada | O(n log n)
+sort.quicksort | ordenar lista geral | O(n log n) average
+fib.matrix | fibonacci exato | O(log n)
+
+[otimizacoes]
+fib(n-1)+fib(n-2) => matrix_fib(n) | evita O(2^n)
+bubble-sort => timsort | rejeita O(n^2) quando nao for didatico
+SELECT * => SELECT colunas | codigo com validade curta
+
+[papers]
+local-only | A base real deve ser preenchida pelo programador. SEED nao usa rede sem permissao.

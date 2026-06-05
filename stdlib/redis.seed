@@ -1,0 +1,42 @@
+module stdlib.redis
+
+/// Redis client module for SEED
+/// Communicates with a Redis server
+
+pub type Redis = {
+    host: string,
+    port: int,
+    connected: bool
+}
+
+pub fn connect(host: string, port: int) -> Result<Redis, string> {
+    return syscall.redis_connect(host, port)
+}
+
+pub fn close(client: Redis) -> Result<void, string> {
+    return syscall.redis_close(client)
+}
+
+pub fn set(client: Redis, key: string, value: string) -> Result<bool, string> {
+    return syscall.redis_set(client, key, value)
+}
+
+pub fn get(client: Redis, key: string) -> Result<Option[string], string> {
+    return syscall.redis_get(client, key)
+}
+
+pub fn del(client: Redis, key: string) -> Result<int, string> {
+    return syscall.redis_del(client, key)
+}
+
+pub fn exists(client: Redis, key: string) -> Result<bool, string> {
+    return syscall.redis_exists(client, key)
+}
+
+pub fn expire(client: Redis, key: string, seconds: int) -> Result<bool, string> {
+    return syscall.redis_expire(client, key, seconds)
+}
+
+pub fn publish(client: Redis, channel: string, message: string) -> Result<int, string> {
+    return syscall.redis_publish(client, channel, message)
+}

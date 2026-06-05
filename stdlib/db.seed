@@ -1,0 +1,84 @@
+module stdlib.db
+
+type Database = {
+    path: string
+    handle: int
+}
+
+type Rows = {
+    columns: [string]
+    data: [[any]]
+}
+
+type Error = {
+    message: string
+    code: int
+}
+
+/// Abre banco SQLite
+fn sqlite_open(path: string) -> Result[Database, Error] {
+    return syscall.db_sqlite_open(path)
+}
+
+/// Executa query
+fn query(db: Database, sql: string, params: [any]) -> Result[Rows, Error] {
+    return syscall.db_query(db, sql, params)
+}
+
+/// Executa comando
+fn execute(db: Database, sql: string, params: [any]) -> Result[int, Error] {
+    return syscall.db_execute(db, sql, params)
+}
+
+/// Fecha conexão
+fn close(db: Database) {
+    syscall.db_close(db)
+}
+
+/// Transação
+fn transaction[T](db: Database, f: fn() -> Result[T, Error]) -> Result[T, Error] {
+    let begin_result = execute(db, "BEGIN TRANSACTION", [])
+    if begin_result.is_err() {
+        return begin_result
+    }
+    
+    let result = f()
+    
+    if result.is_ok() {
+        execute(db, "COMMIT", [])
+    } else {
+        execute(db, "ROLLBACK", [])
+    }
+    
+    return result
+}
+
+/// Prepara statement
+fn prepare(db: Database, sql: string) -> Result[Statement, Error] {
+    return syscall.db_prepare(db, sql)
+}
+
+type Statement = {
+    db: Database
+    sql: string
+}
+
+/// Executa statement preparado
+fn exec(stmt: Statement, params: [any]) -> Result[Rows, Error] {
+    return syscall.db_exec_statement(stmt, params)
+}
+
+/// Último ID inserido
+fn last_insert_id(db: Database) -> int {
+    return syscall.db_last_insert_id(db)
+}
+
+/// Número de linhas afetadas
+fn rows_affected(db: Database) -> int {
+    return syscall.db_rows_affected(db)
+}
+
+/// Escapa string SQL
+fn escape(s: string) -> string {
+    return syscall.db_escape(s)
+}

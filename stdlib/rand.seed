@@ -1,0 +1,237 @@
+module stdlib.rand
+
+// ============================================================
+// RAND.SEED — Gerador de Números Aleatórios
+// Implementa Xorshift128+ para alta qualidade estatística
+// ============================================================
+
+use std::time
+
+// Estado interno do gerador (128 bits)
+type RNG {
+    state0: int,
+    state1: int
+}
+
+// Semente global (inicializada com timestamp)
+let mut RNG_GLOBAL = RNG {
+    state0: 0,
+    state1: 0
+}
+
+let mut INICIALIZADO = false
+
+// ============================================================
+// INICIALIZAÇÃO
+// ============================================================
+
+fn inicializar() {
+    if !INICIALIZADO {
+        let semente = time.now_ns()
+        RNG_GLOBAL.state0 = semente ^ 0xDEADBEEF
+        RNG_GLOBAL.state1 = (semente >> 32) ^ 0xCAFEBABE
+        INICIALIZADO = true
+    }
+}
+
+// ============================================================
+// ALGORITMO XORSHIFT128+
+// ============================================================
+
+fn next_u64(rng: &mut RNG) -> int {
+    let mut s1 = rng.state0
+    let s0 = rng.state1
+    
+    rng.state0 = s0
+    
+    s1 ^= s1 << 23
+    s1 ^= s1 >> 17
+    s1 ^= s0
+    s1 ^= s0 >> 26
+    
+    rng.state1 = s1
+    
+    s0 + s1
+}
+
+// ============================================================
+// API PÚBLICA
+// ============================================================
+
+pub fn seed(semente: int) {
+    inicializar()
+    RNG_GLOBAL.state0 = semente ^ 0x123456789ABCDEF0
+    RNG_GLOBAL.state1 = (semente >> 32) ^ 0xFEDCBA9876543210
+}
+
+pub fn int() -> int {
+    inicializar()
+    next_u64(&mut RNG_GLOBAL)
+}
+
+pub fn int_range(min: int, max: int) -> int {
+    if min >= max {
+        return min
+    }
+    let range = max - min
+    let valor = int() % range
+    if valor < 0 {
+        valor + range + min
+    } else {
+        valor + min
+    }
+}
+
+pub fn float() -> float {
+    inicializar()
+    let bits = next_u64(&mut RNG_GLOBAL)
+    (bits as float) / (0xFFFFFFFFFFFFFFFF as float)
+}
+
+pub fn float_range(min: float, max: float) -> float {
+    min + float() * (max - min)
+}
+
+pub fn bool() -> bool {
+    int() % 2 == 0
+}
+
+pub fn choice(items: [T]) -> T {
+    if items.len() == 0 {
+        panic("rand.choice: array vazio")
+    }
+    items[int_range(0, items.len())]
+}
+
+pub fn choices(items: [T], n: int) -> [T] {
+    let mut result = []
+    let mut copia = items.clone()
+    
+    for _ in 0..n {
+        if copia.len() == 0 {
+            break
+        }
+        let idx = int_range(0, copia.len())
+        result.push(copia[idx])
+        copia.remove(idx)
+    }
+    
+    result
+}
+
+pub fn shuffle(items: &mut [T]) {
+    let mut i = items.len() - 1
+    while i > 0 {
+        let j = int_range(0, i + 1)
+        let temp = items[i]
+        items[i] = items[j]
+        items[j] = temp
+        i -= 1
+    }
+}
+
+pub fn sample(items: [T], n: int) -> [T] {
+    let mut copia = items.clone()
+    shuffle(&mut copia)
+    
+    let limit = if n < copia.len() { n } else { copia.len() }
+    let mut result = []
+    for i in 0..limit {
+        result.push(copia[i])
+    }
+    result
+}
+
+pub fn bytes(n: int) -> [int] {
+    let mut result = []
+    for _ in 0..n {
+        result.push((int() % 256) & 0xFF)
+    }
+    result
+}
+
+pub fn string(length: int) -> string {
+    let chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    let mut result = ""
+    for _ in 0..length {
+        result = result + chars[int_range(0, chars.len())].to_string()
+    }
+    result
+}
+
+pub fn hex(length: int) -> string {
+    let chars = "0123456789abcdef"
+    let mut result = ""
+    for _ in 0..length {
+        result = result + chars[int_range(0, chars.len())].to_string()
+    }
+    result
+}
+
+pub fn gaussian(mean: float, stddev: float) -> float {
+    let u1 = float()
+    let u2 = float()
+    let z0 = math.sqrt(-2.0 * math.ln(u1)) * math.cos(2.0 * math.PI * u2)
+    mean + z0 * stddev
+}
+
+pub fn permutation(n: int) -> [int] {
+    let mut result = []
+    for i in 0..n {
+        result.push(i)
+    }
+    shuffle(&mut result)
+    result
+}
+
+pub fn weighted_choice(items: [T], weights: [float]) -> T {
+    if items.len() == 0 || items.len() != weights.len() {
+        panic("rand.weighted_choice: arrays devem ter o mesmo tamanho")
+    }
+    
+    let mut total = 0.0
+    for w in weights {
+        total += w
+    }
+    
+    let mut r = float() * total
+    for i in 0..items.len() {
+        r -= weights[i]
+        if r <= 0.0 {
+            return items[i]
+        }
+    }
+    
+    items[items.len() - 1]
+}
+
+pub fn uuid() -> string {
+    let mut hex_str = ""
+    for _ in 0..32 {
+        hex_str = hex_str + int_range(0, 16).to_string_base(16)
+    }
+    
+    hex_str[12] = '4'
+    hex_str[16] = (8 + int_range(0, 4)).to_string_base(16)[0]
+    
+    hex_str[0..8] + "-" + 
+    hex_str[8..12] + "-" + 
+    hex_str[12..16] + "-" + 
+    hex_str[16..20] + "-" + 
+    hex_str[20..32]
+}
+
+pub fn dice(faces: int) -> int {
+    int_range(1, faces + 1)
+}
+
+pub fn coin() -> string {
+    if bool() { "cara" } else { "coroa" }
+}
+
+pub fn color() -> string {
+    let r = int_range(0, 256)
+    let g = int_range(0, 256)
+    let b = int_range(0, 256)
+    "#{r.to_hex()}{g.to_hex()}{b.to_hex()}"
+}

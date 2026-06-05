@@ -1,0 +1,18 @@
+module stdlib.reflect
+
+/// Runtime reflection module
+
+pub fn typeof(value: T) -> string {
+    // Get the type name of a value
+    return ""
+}
+
+pub fn typename(type: Type) -> string {
+    // Get the name of a type
+    return ""
+}
+
+pub fn sizeof(type: Type) -> int {
+    // Get the size in bytes of a type
+    return 0
+}

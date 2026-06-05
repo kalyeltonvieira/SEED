@@ -1,0 +1,50 @@
+module stdlib.result
+
+data Option[T] {
+    Some(T)
+    None
+}
+
+data Result[T,E] {
+    Ok(T)
+    Err(E)
+}
+
+fn is_ok[T,E](value: Result[T,E]) -> bool {
+    match value {
+        Ok(_) => true
+        Err(_) => false
+    }
+}
+
+fn is_err[T,E](value: Result[T,E]) -> bool {
+    return !is_ok(value)
+}
+
+fn unwrap_or[T,E](value: Result[T,E], fallback: T) -> T {
+    match value {
+        Ok(v) => v
+        Err(_) => fallback
+    }
+}
+
+fn map[T,U,E](value: Result[T,E], f) -> Result[U,E] {
+    match value {
+        Ok(v) => Ok(f(v))
+        Err(e) => Err(e)
+    }
+}
+
+fn and_then[T,U,E](value: Result[T,E], f) -> Result[U,E] {
+    match value {
+        Ok(v) => f(v)
+        Err(e) => Err(e)
+    }
+}
+
+fn option_unwrap_or[T](value: Option[T], fallback: T) -> T {
+    match value {
+        Some(v) => v
+        None => fallback
+    }
+}

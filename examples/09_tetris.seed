@@ -1,0 +1,226 @@
+module tetris
+
+import stdlib.io
+import stdlib.time
+import stdlib.string
+
+/// Tetris no terminal
+const WIDTH = 10
+const HEIGHT = 20
+
+type Block = {
+    shape: [[bool]]
+    x: int
+    y: int
+}
+
+type Board = [[int]]
+
+fn create_board() -> Board {
+    let board = []
+    for y in 0..HEIGHT {
+        let row = []
+        for x in 0..WIDTH {
+            row.push(0)
+        }
+        board.push(row)
+    }
+    return board
+}
+
+fn create_piece(type: int) -> Block {
+    let shapes = [
+        [[true, true, true, true]], // I
+        [[true, true], [true, true]], // O
+        [[false, true, false], [true, true, true]], // T
+        [[true, false, false], [true, true, true]], // L
+        [[false, false, true], [true, true, true]], // J
+        [[false, true, true], [true, true, false]], // S
+        [[true, true, false], [false, true, true]]  // Z
+    ]
+    
+    return Block {
+        shape: shapes[type],
+        x: WIDTH / 2 - 1,
+        y: 0
+    }
+}
+
+fn render(board: Board, piece: Block, score: int) -> string {
+    let output = ""
+    
+    output = output + "+" + "-" * WIDTH + "+\n"
+    
+    for y in 0..HEIGHT {
+        output = output + "|"
+        for x in 0..WIDTH {
+            let occupied = false
+            
+            // Check piece
+            for py in 0..piece.shape.len {
+                for px in 0..piece.shape[py].len {
+                    if piece.shape[py][px] && 
+                       piece.x + px == x && piece.y + py == y {
+                        output = output + "#"
+                        occupied = true
+                        break
+                    }
+                }
+                if occupied { break }
+            }
+            
+            if !occupied {
+                output = output + if board[y][x] > 0 { "#" } else { " " }
+            }
+        }
+        output = output + "|\n"
+    }
+    
+    output = output + "+" + "-" * WIDTH + "+\n"
+    output = output + "Score: " + score.to_string() + "\n"
+    
+    return output
+}
+
+fn can_place(board: Board, piece: Block, dx: int, dy: int) -> bool {
+    for py in 0..piece.shape.len {
+        for px in 0..piece.shape[py].len {
+            if piece.shape[py][px] {
+                let nx = piece.x + px + dx
+                let ny = piece.y + py + dy
+                
+                if nx < 0 || nx >= WIDTH || ny >= HEIGHT {
+                    return false
+                }
+                
+                if ny >= 0 && board[ny][nx] > 0 {
+                    return false
+                }
+            }
+        }
+    }
+    return true
+}
+
+fn place_piece(board: Board, piece: Block) -> Board {
+    for py in 0..piece.shape.len {
+        for px in 0..piece.shape[py].len {
+            if piece.shape[py][px] {
+                let nx = piece.x + px
+                let ny = piece.y + py
+                if ny >= 0 && ny < HEIGHT {
+                    board[ny][nx] = 1
+                }
+            }
+        }
+    }
+    return board
+}
+
+fn clear_lines(board: Board) -> (Board, int) {
+    let new_board = create_board()
+    let score = 0
+    let write_y = HEIGHT - 1
+    
+    for y in HEIGHT..0 {
+        let full = true
+        for x in 0..WIDTH {
+            if board[y][x] == 0 {
+                full = false
+                break
+            }
+        }
+        
+        if full {
+            score = score + 100
+        } else {
+            new_board[write_y] = board[y]
+            write_y = write_y - 1
+        }
+    }
+    
+    return (new_board, score)
+}
+
+fn rotate_piece(piece: Block) -> Block {
+    let new_shape = []
+    let h = piece.shape.len
+    let w = piece.shape[0].len
+    
+    for y in 0..w {
+        let row = []
+        for x in 0..h {
+            row.push(piece.shape[h - 1 - x][y])
+        }
+        new_shape.push(row)
+    }
+    
+    return Block {
+        shape: new_shape,
+        x: piece.x,
+        y: piece.y
+    }
+}
+
+fn clear_screen() {
+    print("\033[2J\033[H")
+}
+
+fn main() {
+    println("=== Tetris ===")
+    println("A/D para mover, W para rotacionar, S para descer rápido, Q para sair")
+    println("Pressione qualquer tecla para começar...")
+    read_line()
+    
+    let board = create_board()
+    let piece = create_piece(math.random_range(0, 7))
+    let score = 0
+    let running = true
+    
+    while running {
+        clear_screen()
+        println(render(board, piece, score))
+        
+        let key = read_line().trim().to_lower()
+        
+        if key == "q" {
+            running = false
+        } else if key == "a" {
+            if can_place(board, piece, -1, 0) {
+                piece.x = piece.x - 1
+            }
+        } else if key == "d" {
+            if can_place(board, piece, 1, 0) {
+                piece.x = piece.x + 1
+            }
+        } else if key == "w" {
+            let rotated = rotate_piece(piece)
+            if can_place(board, rotated, 0, 0) {
+                piece = rotated
+            }
+        } else if key == "s" {
+            if can_place(board, piece, 0, 1) {
+                piece.y = piece.y + 1
+            }
+        }
+        
+        // Auto fall
+        if can_place(board, piece, 0, 1) {
+            piece.y = piece.y + 1
+        } else {
+            board = place_piece(board, piece)
+            let (new_board, lines_score) = clear_lines(board)
+            board = new_board
+            score = score + lines_score
+            piece = create_piece(math.random_range(0, 7))
+            
+            if !can_place(board, piece, 0, 0) {
+                running = false
+            }
+        }
+        
+        time.sleep(200)
+    }
+    
+    println("Game Over! Score: " + score.to_string())
+}

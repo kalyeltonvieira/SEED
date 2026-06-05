@@ -1,0 +1,62 @@
+module stdlib.option
+
+/// Option type for handling optional values
+/// Inspired by Rust's Option<T>
+
+pub type Option<T> { Some(T) | None }
+
+pub fn is_some(opt: Option<T>) -> bool {
+    match opt {
+        Some(_) => true,
+        None => false
+    }
+}
+
+pub fn is_none(opt: Option<T>) -> bool {
+    match opt {
+        Some(_) => false,
+        None => true
+    }
+}
+
+pub fn unwrap(opt: Option<T>) -> T {
+    match opt {
+        Some(v) => v,
+        None => panic("unwrap called on None")
+    }
+}
+
+pub fn unwrap_or(opt: Option<T>, default: T) -> T {
+    match opt {
+        Some(v) => v,
+        None => default
+    }
+}
+
+pub fn map(opt: Option<T>, f: fn(T) -> U) -> Option<U> {
+    match opt {
+        Some(v) => Some(f(v)),
+        None => None
+    }
+}
+
+pub fn and_then(opt: Option<T>, f: fn(T) -> Option<U>) -> Option<U> {
+    match opt {
+        Some(v) => f(v),
+        None => None
+    }
+}
+
+pub fn or_else(opt: Option<T>, f: fn() -> Option<T>) -> Option<T> {
+    match opt {
+        Some(_) => opt,
+        None => f()
+    }
+}
+
+pub fn expect(opt: Option<T>, msg: string) -> T {
+    match opt {
+        Some(v) => v,
+        None => panic(msg)
+    }
+}

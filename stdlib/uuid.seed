@@ -1,0 +1,48 @@
+module stdlib.uuid
+
+/// UUID generation module
+/// Provides UUID v4 (random) and UUID v7 (time-ordered)
+
+pub fn uuid() -> string {
+    // Generate a random UUID v4: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+    // where y is 8, 9, a, or b
+    let hex_chars = "0123456789abcdef"
+    let result = ""
+    
+    for i in 0..36 {
+        if i == 8 || i == 13 || i == 18 || i == 23 {
+            result = result + "-"
+        } else if i == 14 {
+            result = result + "4"
+        } else if i == 19 {
+            let r = random.range(8, 11)
+            result = result + hex_chars.substring(r, r + 1)
+        } else {
+            let r = random.range(0, 15)
+            result = result + hex_chars.substring(r, r + 1)
+        }
+    }
+    return result
+}
+
+pub fn uuid_v7() -> string {
+    // Generate a UUID v7 (time-ordered): xxxxxxxx-xxxx-7xxx-yxxx-xxxxxxxxxxxx
+    // where y is 8, 9, a, or b
+    let hex_chars = "0123456789abcdef"
+    let result = ""
+    
+    for i in 0..36 {
+        if i == 8 || i == 13 || i == 18 || i == 23 {
+            result = result + "-"
+        } else if i == 14 {
+            result = result + "7"
+        } else if i == 19 {
+            let r = random.range(8, 11)
+            result = result + hex_chars.substring(r, r + 1)
+        } else {
+            let r = random.range(0, 15)
+            result = result + hex_chars.substring(r, r + 1)
+        }
+    }
+    return result
+}

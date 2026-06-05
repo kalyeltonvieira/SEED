@@ -1,0 +1,31 @@
+module stdlib.mime
+
+/// MIME type mapping and lookup module
+
+pub fn lookup(ext: string) -> string {
+    let cleaned = if ext.starts_with(".") { ext.substring(1, ext.len) } else { ext }
+    let lowered = cleaned.to_lower()
+    
+    match lowered {
+        "html" => return "text/html"
+        "htm" => return "text/html"
+        "css" => return "text/css"
+        "js" => return "application/javascript"
+        "json" => return "application/json"
+        "png" => return "image/png"
+        "jpg" => return "image/jpeg"
+        "jpeg" => return "image/jpeg"
+        "gif" => return "image/gif"
+        "svg" => return "image/svg+xml"
+        "ico" => return "image/x-icon"
+        "txt" => return "text/plain"
+        "pdf" => return "application/pdf"
+        "zip" => return "application/zip"
+        "tar" => return "application/x-tar"
+        "xml" => return "application/xml"
+        "mp3" => return "audio/mpeg"
+        "mp4" => return "video/mp4"
+        "wav" => return "audio/wav"
+        _ => return "application/octet-stream"
+    }
+}

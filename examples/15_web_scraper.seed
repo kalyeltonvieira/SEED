@@ -1,0 +1,359 @@
+module web_scraper
+
+import stdlib.io
+import stdlib.net
+import stdlib.http
+import stdlib.json
+import stdlib.string
+import stdlib.encoding
+
+/// Web scraper com suporte a seletores CSS e extração de dados
+
+type Scraper = {
+    base_url: string
+    user_agent: string
+    cookies: dict
+    rate_limiter: http.RateLimiter
+}
+
+type Selector = {
+    tag: string
+    id: string
+    class: string
+    attribute: string
+}
+
+type Element = {
+    tag: string
+    text: string
+    attributes: dict
+    children: [Element]
+}
+
+fn scraper(base_url: string) -> Scraper {
+    return Scraper {
+        base_url: base_url,
+        user_agent: "SEED Scraper 1.0",
+        cookies: http.cookie_jar(),
+        rate_limiter: http.rate_limiter(10, 1) // 10 requests per second
+    }
+}
+
+fn set_user_agent(scraper: Scraper, agent: string) {
+    scraper.user_agent = agent
+}
+
+fn fetch(scraper: Scraper, url: string) -> string {
+    http.wait_if_needed(scraper.rate_limiter)
+    
+    let headers = {
+        "User-Agent": scraper.user_agent
+    }
+    
+    let response = net.get(url)
+    
+    match response {
+        Result[net.Response, net.Error].Ok(resp) => {
+            return resp.body
+        }
+        Result[net.Response, net.Error].Err(err) => {
+            println("Error fetching " + url + ": " + err.message)
+            return ""
+        }
+    }
+}
+
+fn fetch_json(scraper: Scraper, url: string) -> json.Value {
+    let body = fetch(scraper, url)
+    return json.parse(body).unwrap()
+}
+
+fn parse_html(html: string) -> [Element] {
+    let elements = []
+    let lines = html.split("\n")
+    
+    for line in lines {
+        let trimmed = line.trim()
+        
+        if trimmed.starts_with("<") && !trimmed.starts_with("</") {
+            let element = parse_tag(trimmed)
+            if element != null {
+                elements.push(element)
+            }
+        }
+    }
+    
+    return elements
+}
+
+fn parse_tag(html: string) -> Element {
+    let tag_end = html.index_of(" ")
+    let close_bracket = html.index_of(">")
+    
+    if tag_end < 0 {
+        tag_end = close_bracket
+    }
+    
+    let tag = html.substring(1, tag_end)
+    let attributes = parse_attributes(html.substring(tag_end, close_bracket))
+    
+    return Element {
+        tag: tag,
+        text: "",
+        attributes: attributes,
+        children: []
+    }
+}
+
+fn parse_attributes(attr_string: string) -> dict {
+    let attrs = dict()
+    let parts = attr_string.trim().split(" ")
+    
+    for part in parts {
+        if part.contains("=") {
+            let kv = part.split("=")
+            let value = kv[1].replace("\"", "").replace("'", "")
+            attrs[kv[0]] = value
+        }
+    }
+    
+    return attrs
+}
+
+fn select(elements: [Element], selector: string) -> [Element] {
+    let sel = parse_selector(selector)
+    let results = []
+    
+    for element in elements {
+        if matches(element, sel) {
+            results.push(element)
+        }
+    }
+    
+    return results
+}
+
+fn parse_selector(selector: string) -> Selector {
+    let sel = Selector {
+        tag: "",
+        id: "",
+        class: "",
+        attribute: ""
+    }
+    
+    if selector.contains("#") {
+        let parts = selector.split("#")
+        sel.tag = parts[0]
+        sel.id = parts[1]
+    } else if selector.contains(".") {
+        let parts = selector.split(".")
+        sel.tag = parts[0]
+        sel.class = parts[1]
+    } else if selector.contains("[") {
+        let start = selector.index_of("[")
+        let end = selector.index_of("]")
+        sel.tag = selector.substring(0, start)
+        sel.attribute = selector.substring(start + 1, end)
+    } else {
+        sel.tag = selector
+    }
+    
+    return sel
+}
+
+fn matches(element: Element, selector: Selector) -> bool {
+    if selector.tag.len > 0 && element.tag != selector.tag {
+        return false
+    }
+    
+    if selector.id.len > 0 {
+        let id = element.attributes.get("id", "")
+        if id != selector.id {
+            return false
+        }
+    }
+    
+    if selector.class.len > 0 {
+        let class_attr = element.attributes.get("class", "")
+        if !class_attr.contains(selector.class) {
+            return false
+        }
+    }
+    
+    if selector.attribute.len > 0 {
+        let parts = selector.attribute.split("=")
+        let attr_name = parts[0]
+        let attr_value = parts[1]
+        
+        if !element.attributes.contains(attr_name) {
+            return false
+        }
+        
+        if element.attributes[attr_name] != attr_value {
+            return false
+        }
+    }
+    
+    return true
+}
+
+fn get_text(element: Element) -> string {
+    return element.text
+}
+
+fn get_attribute(element: Element, name: string) -> string {
+    return element.attributes.get(name, "")
+}
+
+fn extract_links(html: string) -> [string] {
+    let links = []
+    let elements = parse_html(html)
+    let anchors = select(elements, "a")
+    
+    for anchor in anchors {
+        let href = get_attribute(anchor, "href")
+        if href.len > 0 {
+            links.push(href)
+        }
+    }
+    
+    return links
+}
+
+fn extract_images(html: string) -> [string] {
+    let images = []
+    let elements = parse_html(html)
+    let imgs = select(elements, "img")
+    
+    for img in imgs {
+        let src = get_attribute(img, "src")
+        if src.len > 0 {
+            images.push(src)
+        }
+    }
+    
+    return images
+}
+
+fn extract_text(html: string) -> string {
+    let text = html
+    text = text.replace("<[^>]+>", "")
+    text = text.replace("&nbsp;", " ")
+    text = text.replace("&lt;", "<")
+    text = text.replace("&gt;", ">")
+    text = text.replace("&amp;", "&")
+    return text.trim()
+}
+
+fn crawl(scraper: Scraper, start_url: string, max_depth: int) -> dict[string, string] {
+    let visited = dict()
+    let queue = [start_url]
+    
+    while queue.len > 0 {
+        let url = queue.pop()
+        
+        if visited.contains(url) {
+            continue
+        }
+        
+        visited[url] = ""
+        
+        if visited.len > 100 {
+            break
+        }
+        
+        println("Crawling: " + url)
+        
+        let html = fetch(scraper, url)
+        let links = extract_links(html)
+        
+        for link in links {
+            if link.starts_with("http") {
+                queue.push(link)
+            } else if link.starts_with("/") {
+                queue.push(scraper.base_url + link)
+            }
+        }
+    }
+    
+    return visited
+}
+
+fn scrape_table(html: string, table_selector: string) -> [[string]] {
+    let elements = parse_html(html)
+    let tables = select(elements, table_selector)
+    
+    if tables.len == 0 {
+        return []
+    }
+    
+    let table = tables[0]
+    let rows = select(table.children, "tr")
+    
+    let data = []
+    for row in rows {
+        let cells = select(row.children, "td")
+        let row_data = []
+        for cell in cells {
+            row_data.push(get_text(cell))
+        }
+        data.push(row_data)
+    }
+    
+    return data
+}
+
+fn save_to_csv(data: [[string]], path: string) {
+    let writer = csv.csv_writer(",")
+    for row in data {
+        csv.write_row(writer, row)
+    }
+    csv.save(writer, path)
+}
+
+fn save_to_json(data: any, path: string) {
+    let json_str = json.stringify_pretty(data).unwrap()
+    fs.write_file(path, json_str)
+}
+
+fn main() {
+    println("=== Web Scraper Example ===")
+    
+    let scraper = scraper("https://example.com")
+    
+    // Example 1: Fetch and parse
+    println("\n--- Fetch and Parse ---")
+    let html = fetch(scraper, "https://example.com")
+    let elements = parse_html(html)
+    println("Found " + elements.len.to_string() + " elements")
+    
+    // Example 2: Extract links
+    println("\n--- Extract Links ---")
+    let links = extract_links(html)
+    println("Found " + links.len.to_string() + " links")
+    for i in 0..3 {
+        println("  " + links[i])
+    }
+    
+    // Example 3: Extract images
+    println("\n--- Extract Images ---")
+    let images = extract_images(html)
+    println("Found " + images.len.to_string() + " images")
+    
+    // Example 4: Extract text
+    println("\n--- Extract Text ---")
+    let text = extract_text(html)
+    println("Text length: " + text.len.to_string())
+    
+    // Example 5: Select elements
+    println("\n--- Select Elements ---")
+    let anchors = select(elements, "a")
+    println("Found " + anchors.len.to_string() + " anchors")
+    
+    // Example 6: Crawl
+    println("\n--- Crawl ---")
+    let visited = crawl(scraper, "https://example.com", 2)
+    println("Visited " + visited.len.to_string() + " pages")
+    
+    println("\nDone!")
+}

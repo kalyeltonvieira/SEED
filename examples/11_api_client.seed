@@ -1,0 +1,174 @@
+module api_client
+
+import stdlib.io
+import stdlib.net
+import stdlib.json
+import stdlib.encoding
+
+/// Cliente de API REST com autenticação e retry
+
+type APIClient = {
+    base_url: string
+    api_key: string
+    timeout: int
+    max_retries: int
+}
+
+fn api_client(base_url: string, api_key: string) -> APIClient {
+    return APIClient {
+        base_url: base_url,
+        api_key: api_key,
+        timeout: 30000,
+        max_retries: 3
+    }
+}
+
+fn get(client: APIClient, endpoint: string) -> Result[json.Value, string] {
+    let url = client.base_url + endpoint
+    let headers = {
+        "Authorization": "Bearer " + client.api_key,
+        "Content-Type": "application/json"
+    }
+    
+    let response = net.request("GET", url, headers, "")
+    
+    match response {
+        Result[net.Response, net.Error].Ok(resp) => {
+            if resp.status >= 200 && resp.status < 300 {
+                return json.parse(resp.body)
+            } else {
+                return Result[json.Value, string].Err("HTTP " + resp.status.to_string())
+            }
+        }
+        Result[net.Response, net.Error].Err(err) => {
+            return Result[json.Value, string].Err(err.message)
+        }
+    }
+}
+
+fn post(client: APIClient, endpoint: string, data: json.Value) -> Result[json.Value, string] {
+    let url = client.base_url + endpoint
+    let headers = {
+        "Authorization": "Bearer " + client.api_key,
+        "Content-Type": "application/json"
+    }
+    
+    let body = json.stringify(data).unwrap()
+    let response = net.request("POST", url, headers, body)
+    
+    match response {
+        Result[net.Response, net.Error].Ok(resp) => {
+            if resp.status >= 200 && resp.status < 300 {
+                return json.parse(resp.body)
+            } else {
+                return Result[json.Value, string].Err("HTTP " + resp.status.to_string())
+            }
+        }
+        Result[net.Response, net.Error].Err(err) => {
+            return Result[json.Value, string].Err(err.message)
+        }
+    }
+}
+
+fn put(client: APIClient, endpoint: string, data: json.Value) -> Result[json.Value, string] {
+    let url = client.base_url + endpoint
+    let headers = {
+        "Authorization": "Bearer " + client.api_key,
+        "Content-Type": "application/json"
+    }
+    
+    let body = json.stringify(data).unwrap()
+    let response = net.request("PUT", url, headers, body)
+    
+    match response {
+        Result[net.Response, net.Error].Ok(resp) => {
+            if resp.status >= 200 && resp.status < 300 {
+                return json.parse(resp.body)
+            } else {
+                return Result[json.Value, string].Err("HTTP " + resp.status.to_string())
+            }
+        }
+        Result[net.Response, net.Error].Err(err) => {
+            return Result[json.Value, string].Err(err.message)
+        }
+    }
+}
+
+fn delete(client: APIClient, endpoint: string) -> Result[json.Value, string] {
+    let url = client.base_url + endpoint
+    let headers = {
+        "Authorization": "Bearer " + client.api_key,
+        "Content-Type": "application/json"
+    }
+    
+    let response = net.request("DELETE", url, headers, "")
+    
+    match response {
+        Result[net.Response, net.Error].Ok(resp) => {
+            if resp.status >= 200 && resp.status < 300 {
+                return json.parse(resp.body)
+            } else {
+                return Result[json.Value, string].Err("HTTP " + resp.status.to_string())
+            }
+        }
+        Result[net.Response, net.Error].Err(err) => {
+            return Result[json.Value, string].Err(err.message)
+        }
+    }
+}
+
+fn main() {
+    println("=== API Client Example ===")
+    
+    // Example: GitHub API
+    let client = api_client("https://api.github.com", "")
+    
+    // Get user info
+    let result = get(client, "/users/octocat")
+    
+    match result {
+        Result[json.Value, string].Ok(data) => {
+            println("User: " + data.data.get("login", "").data)
+            println("Name: " + data.data.get("name", "").data)
+            println("Bio: " + data.data.get("bio", "").data)
+        }
+        Result[json.Value, string].Err(err) => {
+            println("Error: " + err)
+        }
+    }
+    
+    // Example with retry
+    let result_with_retry = get_with_retry(client, "/users/octocat")
+    
+    match result_with_retry {
+        Result[json.Value, string].Ok(data) => {
+            println("Repositories: " + data.data.get("public_repos", "0").data)
+        }
+        Result[json.Value, string].Err(err) => {
+            println("Error after retry: " + err)
+        }
+    }
+}
+
+fn get_with_retry(client: APIClient, endpoint: string) -> Result[json.Value, string] {
+    let attempts = 0
+    
+    while attempts < client.max_retries {
+        let result = get(client, endpoint)
+        
+        match result {
+            Result[json.Value, string].Ok(data) => {
+                return result
+            }
+            Result[json.Value, string].Err(err) => {
+                attempts = attempts + 1
+                if attempts < client.max_retries {
+                    println("Retry " + attempts.to_string() + "...")
+                    time.sleep(1000 * attempts)
+                }
+            }
+        }
+    }
+    
+    return Result[json.Value, string].Err("Max retries exceeded")
+}

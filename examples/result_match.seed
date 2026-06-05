@@ -1,0 +1,31 @@
+module examples.result_match
+
+import stdlib.fs
+import stdlib.io
+import stdlib.result
+
+type Config = { name: String, port: Int }
+
+fn parse_config(body: String) -> Result[Config, Error] {
+    if body.len == 0 { return Err(Error("config vazia")) }
+    return Ok(Config("seed", 7331))
+}
+
+fn load_config(path: String) effect fs -> Result[Config, Error] {
+    let body = fs.read_text(path)?
+    let config = parse_config(body)?
+    return Ok(config)
+}
+
+fn main() effect io,fs -> Int {
+    match load_config("seed.toml") {
+        Ok(config) => {
+            print("porta: " + to_string(config.port) + "\n")
+            return 0
+        }
+        Err(e) => {
+            print("erro: " + e.message + "\n")
+            return 1
+        }
+    }
+}

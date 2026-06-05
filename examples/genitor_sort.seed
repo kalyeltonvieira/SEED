@@ -1,0 +1,13 @@
+module examples.genitor_sort
+
+genitor Ordenador {
+    entrada: Array[Int]
+    saida: Array[Int]
+    propriedade: saida.is_sorted() && saida.multiset() == entrada.multiset()
+    fitness: runtime + memory + bytecode_size
+}
+
+fn main() -> Int {
+    let ordenar = evolve Ordenador for 100 generations
+    return ordenar([5, 1, 3, 2, 4])[0]
+}

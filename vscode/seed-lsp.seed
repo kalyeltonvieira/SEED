@@ -1,0 +1,552 @@
+module seed_lsp
+
+import stdlib.io
+import stdlib.net
+import stdlib.json
+import stdlib.string
+
+/// Language Server Protocol (LSP) implementation for SEED
+
+type LSPServer = {
+    client_capabilities: dict
+    server_capabilities: dict
+    documents: dict
+    diagnostics: dict
+}
+
+type Position = {
+    line: int
+    character: int
+}
+
+type Range = {
+    start: Position
+    end: Position
+}
+
+type Location = {
+    uri: string
+    range: Range
+}
+
+type Diagnostic = {
+    range: Range
+    severity: int
+    code: string
+    message: string
+    source: string
+}
+
+type CompletionItem = {
+    label: string
+    kind: int
+    detail: string
+    documentation: string
+}
+
+type TextDocumentItem = {
+    uri: string
+    languageId: string
+    version: int
+    text: string
+}
+
+fn lsp_server() -> LSPServer {
+    return LSPServer {
+        client_capabilities: dict(),
+        server_capabilities: dict([
+            ("textDocumentSync", json.number(1)),
+            ("completionProvider", json.object([
+                ("resolveProvider", json.boolean(false)),
+                ("triggerCharacters", json.array([json.string("."), json.string(":")]))
+            ])),
+            ("hoverProvider", json.boolean(true)),
+            ("definitionProvider", json.boolean(true)),
+            ("referencesProvider", json.boolean(true)),
+            ("documentSymbolProvider", json.boolean(true)),
+            ("workspaceSymbolProvider", json.boolean(true)),
+            ("codeActionProvider", json.boolean(true))
+        ]),
+        documents: dict(),
+        diagnostics: dict()
+    }
+}
+
+fn handle_initialize(server: LSPServer, params: json.Value) -> json.Value {
+    server.client_capabilities = params.data.get("capabilities", json.object([])).data
+    
+    return json.object([
+        ("capabilities", json.object(server.server_capabilities)),
+        ("serverInfo", json.object([
+            ("name", json.string("SEED Language Server")),
+            ("version", json.string("1.0.0"))
+        ]))
+    ])
+}
+
+fn handle_initialized(server: LSPServer, params: json.Value) {
+    println("Client initialized")
+}
+
+fn handle_shutdown(server: LSPServer, params: json.Value) {
+    println("Shutdown requested")
+}
+
+fn handle_exit(server: LSPServer, params: json.Value) {
+    println("Exiting")
+    os.exit(0)
+}
+
+fn handle_did_open(server: LSPServer, params: json.Value) {
+    let doc = params.data.get("textDocument").data
+    let uri = doc.data.get("uri").data
+    let text = doc.data.get("text").data
+    
+    server.documents[uri] = text
+    server.diagnostics[uri] = diagnose(text, uri)
+    
+    publish_diagnostics(server, uri)
+}
+
+fn handle_did_change(server: LSPServer, params: json.Value) {
+    let doc = params.data.get("textDocument").data
+    let uri = doc.data.get("uri").data
+    let changes = params.data.get("contentChanges").data
+    
+    let current = server.documents.get(uri, "")
+    for change in changes {
+        let text = change.data.get("text").data
+        server.documents[uri] = text
+    }
+    
+    server.diagnostics[uri] = diagnose(server.documents[uri], uri)
+    publish_diagnostics(server, uri)
+}
+
+fn handle_did_close(server: LSPServer, params: json.Value) {
+    let doc = params.data.get("textDocument").data
+    let uri = doc.data.get("uri").data
+    
+    server.documents.remove(uri)
+    server.diagnostics.remove(uri)
+    
+    publish_diagnostics(server, uri)
+}
+
+fn handle_completion(server: LSPServer, params: json.Value) -> json.Value {
+    let doc = params.data.get("textDocument").data
+    let uri = doc.data.get("uri").data
+    let position = params.data.get("position").data
+    
+    let text = server.documents.get(uri, "")
+    let line = get_line(text, position.data.get("line", 0).data)
+    let prefix = line.substring(0, position.data.get("character", 0).data)
+    
+    let items = get_completions(prefix)
+    
+    return json.object([
+        ("isIncomplete", json.boolean(false)),
+        ("items", json.array(items))
+    ])
+}
+
+fn handle_hover(server: LSPServer, params: json.Value) -> json.Value {
+    let doc = params.data.get("textDocument").data
+    let uri = doc.data.get("uri").data
+    let position = params.data.get("position").data
+    
+    let text = server.documents.get(uri, "")
+    let word = get_word_at_position(text, position)
+    
+    let hover_text = get_hover_info(word)
+    
+    return json.object([
+        ("contents", json.array([
+            json.object([
+                ("language", json.string("seed")),
+                ("value", json.string(hover_text))
+            ])
+        ]))
+    ])
+}
+
+fn handle_definition(server: LSPServer, params: json.Value) -> json.Value {
+    let doc = params.data.get("textDocument").data
+    let uri = doc.data.get("uri").data
+    let position = params.data.get("position").data
+    
+    let text = server.documents.get(uri, "")
+    let word = get_word_at_position(text, position)
+    
+    let location = find_definition(text, word, uri)
+    
+    if location != null {
+        return json.array([location])
+    }
+    
+    return json.array([])
+}
+
+fn handle_references(server: LSPServer, params: json.Value) -> json.Value {
+    let doc = params.data.get("textDocument").data
+    let uri = doc.data.get("uri").data
+    let position = params.data.get("position").data
+    
+    let text = server.documents.get(uri, "")
+    let word = get_word_at_position(text, position)
+    
+    let locations = find_references(text, word, uri)
+    
+    return json.array(locations)
+}
+
+fn handle_document_symbol(server: LSPServer, params: json.Value) -> json.Value {
+    let doc = params.data.get("textDocument").data
+    let uri = doc.data.get("uri").data
+    
+    let text = server.documents.get(uri, "")
+    let symbols = extract_symbols(text)
+    
+    return json.array(symbols)
+}
+
+fn handle_workspace_symbol(server: LSPServer, params: json.Value) -> json.Value {
+    let query = params.data.get("query").data
+    
+    let symbols = []
+    for (uri, text) in server.documents {
+        let file_symbols = extract_symbols(text)
+        for symbol in file_symbols {
+            if symbol.data.get("name").data.contains(query) {
+                symbols.push(symbol)
+            }
+        }
+    }
+    
+    return json.array(symbols)
+}
+
+fn handle_code_action(server: LSPServer, params: json.Value) -> json.Value {
+    let doc = params.data.get("textDocument").data
+    let uri = doc.data.get("uri").data
+    let range = params.data.get("range").data
+    
+    let text = server.documents.get(uri, "")
+    let diagnostics = server.diagnostics.get(uri, json.array([]))
+    
+    let actions = []
+    for diag in diagnostics.data {
+        let action = json.object([
+            ("title", json.string("Fix: " + diag.data.get("message").data)),
+            ("kind", json.number(1)),
+            ("edit", json.object([
+                ("changes", json.array([
+                    json.object([
+                        ("textDocument", json.object([
+                            ("uri", json.string(uri)),
+                            ("version", json.number(0))
+                        ])),
+                        ("edits", json.array([]))
+                    ])
+                ]))
+            ]))
+        ])
+        actions.push(action)
+    }
+    
+    return json.array(actions)
+}
+
+// Helper functions
+fn diagnose(text: string, uri: string) -> json.Value {
+    let diagnostics = []
+    let lines = text.split("\n")
+    
+    for i in 0..lines.len {
+        let line = lines[i]
+        
+        // Check for common issues
+        if line.contains("TODO") {
+            diagnostics.push(json.object([
+                ("range", json.object([
+                    ("start", json.object([
+                        ("line", json.number(i)),
+                        ("character", json.number(line.index_of("TODO")))
+                    ])),
+                    ("end", json.object([
+                        ("line", json.number(i)),
+                        ("character", json.number(line.index_of("TODO") + 4))
+                    ]))
+                ])),
+                ("severity", json.number(4)),
+                ("code", json.string("TODO")),
+                ("message", json.string("Unresolved TODO")),
+                ("source", json.string("seed-lsp"))
+            ]))
+        }
+        
+        if line.contains("fn ") && !line.contains("->") {
+            diagnostics.push(json.object([
+                ("range", json.object([
+                    ("start", json.object([
+                        ("line", json.number(i)),
+                        ("character", json.number(0))
+                    ])),
+                    ("end", json.object([
+                        ("line", json.number(i)),
+                        ("character", json.number(line.len()))
+                    ]))
+                ])),
+                ("severity", json.number(2)),
+                ("code", json.string("MISSING_RETURN")),
+                ("message", json.string("Function missing return type")),
+                ("source", json.string("seed-lsp"))
+            ]))
+        }
+    }
+    
+    return json.array(diagnostics)
+}
+
+fn publish_diagnostics(server: LSPServer, uri: string) {
+    let diagnostics = server.diagnostics.get(uri, json.array([]))
+    
+    let notification = json.object([
+        ("jsonrpc", json.string("2.0")),
+        ("method", json.string("textDocument/publishDiagnostics")),
+        ("params", json.object([
+            ("uri", json.string(uri)),
+            ("diagnostics", diagnostics)
+        ]))
+    ])
+    
+    // Send to client (in real implementation)
+}
+
+fn get_line(text: string, line: int) -> string {
+    let lines = text.split("\n")
+    if line < lines.len {
+        return lines[line]
+    }
+    return ""
+}
+
+fn get_word_at_position(text: string, position: dict) -> string {
+    let line_num = position.get("line", 0).data
+    let char_num = position.get("character", 0).data
+    let line = get_line(text, line_num)
+    
+    let start = char_num
+    while start > 0 && is_identifier_char(line[start - 1]) {
+        start = start - 1
+    }
+    
+    let end = char_num
+    while end < line.len() && is_identifier_char(line[end]) {
+        end = end + 1
+    }
+    
+    return line.substring(start, end)
+}
+
+fn is_identifier_char(c: string) -> bool {
+    return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || (c >= "0" && c <= "9") || c == "_"
+}
+
+fn get_completions(prefix: string) -> [json.Value] {
+    let keywords = ["fn", "let", "const", "if", "else", "for", "while", "return", "import", "module", "type", "enum", "data", "match", "async", "await"]
+    let stdlib_modules = ["io", "math", "string", "collections", "net", "fs", "crypto", "json", "time", "os", "cli", "db", "test"]
+    
+    let items = []
+    
+    for kw in keywords {
+        if kw.starts_with(prefix) {
+            items.push(json.object([
+                ("label", json.string(kw)),
+                ("kind", json.number(14)),
+                ("detail", json.string("keyword")),
+                ("documentation", json.string(""))
+            ]))
+        }
+    }
+    
+    for mod in stdlib_modules {
+        if mod.starts_with(prefix) {
+            items.push(json.object([
+                ("label", json.string(mod)),
+                ("kind", json.number(9)),
+                ("detail", json.string("module")),
+                ("documentation", json.string("Standard library module"))
+            ]))
+        }
+    }
+    
+    return items
+}
+
+fn get_hover_info(word: string) -> string {
+    let docs = {
+        "fn": "Function declaration: fn name(params) -> return_type",
+        "let": "Variable binding: let name = value",
+        "if": "Conditional: if condition { } else { }",
+        "for": "Loop: for item in collection { }",
+        "async": "Async function: async fn() -> Future[T]",
+        "await": "Await async result: await(future)"
+    }
+    
+    return docs.get(word, "No documentation available")
+}
+
+fn find_definition(text: string, word: string, uri: string) -> json.Value {
+    let lines = text.split("\n")
+    
+    for i in 0..lines.len {
+        let line = lines[i]
+        if line.contains("fn " + word) || line.contains("let " + word) {
+            let pos = line.index_of(word)
+            return json.object([
+                ("uri", json.string(uri)),
+                ("range", json.object([
+                    ("start", json.object([
+                        ("line", json.number(i)),
+                        ("character", json.number(pos))
+                    ])),
+                    ("end", json.object([
+                        ("line", json.number(i)),
+                        ("character", json.number(pos + word.len()))
+                    ]))
+                ]))
+            ])
+        }
+    }
+    
+    return null
+}
+
+fn find_references(text: string, word: string, uri: string) -> [json.Value] {
+    let lines = text.split("\n")
+    let locations = []
+    
+    for i in 0..lines.len {
+        let line = lines[i]
+        let pos = 0
+        
+        while pos < line.len() {
+            let found = line.index_of(word, pos)
+            if found >= 0 {
+                locations.push(json.object([
+                    ("uri", json.string(uri)),
+                    ("range", json.object([
+                        ("start", json.object([
+                            ("line", json.number(i)),
+                            ("character", json.number(found))
+                        ])),
+                        ("end", json.object([
+                            ("line", json.number(i)),
+                            ("character", json.number(found + word.len()))
+                        ]))
+                    ]))
+                ]))
+                pos = found + word.len()
+            } else {
+                break
+            }
+        }
+    }
+    
+    return locations
+}
+
+fn extract_symbols(text: string) -> [json.Value] {
+    let lines = text.split("\n")
+    let symbols = []
+    
+    for i in 0..lines.len {
+        let line = lines[i]
+        
+        if line.starts_with("fn ") {
+            let name = line.split("(")[0].trim().substring(3, line.len())
+            symbols.push(json.object([
+                ("name", json.string(name)),
+                ("kind", json.number(12)),
+                ("range", json.object([
+                    ("start", json.object([
+                        ("line", json.number(i)),
+                        ("character", json.number(0))
+                    ])),
+                    ("end", json.object([
+                        ("line", json.number(i)),
+                        ("character", json.number(line.len()))
+                    ]))
+                ]))
+            ]))
+        }
+        
+        if line.starts_with("type ") {
+            let name = line.split("=")[0].trim().substring(5, line.len())
+            symbols.push(json.object([
+                ("name", json.string(name)),
+                ("kind", json.number(5)),
+                ("range", json.object([
+                    ("start", json.object([
+                        ("line", json.number(i)),
+                        ("character", json.number(0))
+                    ])),
+                    ("end", json.object([
+                        ("line", json.number(i)),
+                        ("character", json.number(line.len()))
+                    ]))
+                ]))
+            ]))
+        }
+    }
+    
+    return symbols
+}
+
+fn main() {
+    let server = lsp_server()
+    
+    println("SEED Language Server v1.0")
+    println("Listening on stdio...")
+    
+    // In real implementation, this would use stdio for JSON-RPC communication
+    // For now, we'll use a simple TCP server for demonstration
+    
+    net.serve(4139, fn(req: net.Request) -> net.Response {
+        let body = json.parse(req.body).unwrap()
+        let method = body.data.get("method", "").data
+        let params = body.data.get("params", json.object([]))
+        let id = body.data.get("id", json.number(0))
+        
+        let result = match method {
+            "initialize" => handle_initialize(server, params),
+            "initialized" => { handle_initialized(server, params); json.null() }
+            "shutdown" => { handle_shutdown(server, params); json.null() }
+            "exit" => { handle_exit(server, params); json.null() }
+            "textDocument/didOpen" => { handle_did_open(server, params); json.null() }
+            "textDocument/didChange" => { handle_did_change(server, params); json.null() }
+            "textDocument/didClose" => { handle_did_close(server, params); json.null() }
+            "textDocument/completion" => handle_completion(server, params)
+            "textDocument/hover" => handle_hover(server, params)
+            "textDocument/definition" => handle_definition(server, params)
+            "textDocument/references" => handle_references(server, params)
+            "textDocument/documentSymbol" => handle_document_symbol(server, params)
+            "workspace/symbol" => handle_workspace_symbol(server, params)
+            "textDocument/codeAction" => handle_code_action(server, params)
+            _ => json.null()
+        }
+        
+        let response = json.object([
+            ("jsonrpc", json.string("2.0")),
+            ("id", id),
+            ("result", result)
+        ])
+        
+        return net.Response {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+            body: json.stringify(response).unwrap()
+        }
+    })
+}

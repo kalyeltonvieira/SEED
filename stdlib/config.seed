@@ -1,0 +1,338 @@
+module stdlib.config
+
+/// Carregamento de arquivos de configuração (TOML, YAML, INI, ENV)
+
+type Config = {
+    values: dict
+    sources: [string]
+}
+
+// TOML
+fn parse_toml(data: string) -> Config {
+    let config = Config {
+        values: dict(),
+        sources: ["toml"]
+    }
+    
+    let lines = data.split("\n")
+    let current_section = ""
+    
+    for line in lines {
+        let trimmed = line.trim()
+        
+        // Skip comments and empty lines
+        if trimmed.starts_with("#") || trimmed.is_empty() {
+            continue
+        }
+        
+        // Section header
+        if trimmed.starts_with("[") && trimmed.ends_with("]") {
+            current_section = trimmed.substring(1, trimmed.len() - 1)
+            continue
+        }
+        
+        // Key-value pair
+        let parts = trimmed.split("=")
+        if parts.len == 2 {
+            let key = parts[0].trim()
+            let value = parse_toml_value(parts[1].trim())
+            
+            let full_key = if current_section.is_empty() { key } else { current_section + "." + key }
+            config.values[full_key] = value
+        }
+    }
+    
+    return config
+}
+
+fn parse_toml_value(s: string) -> string {
+    let trimmed = s.trim()
+    
+    // String
+    if trimmed.starts_with("\"") && trimmed.ends_with("\"") {
+        return trimmed.substring(1, trimmed.len() - 1)
+    }
+    
+    // Boolean
+    if trimmed == "true" || trimmed == "false" {
+        return trimmed
+    }
+    
+    // Number
+    if trimmed.contains(".") || trimmed.to_int() != 0 {
+        return trimmed
+    }
+    
+    return trimmed
+}
+
+// YAML
+fn parse_yaml(data: string) -> Config {
+    let config = Config {
+        values: dict(),
+        sources: ["yaml"]
+    }
+    
+    let lines = data.split("\n")
+    let stack = []
+    let current_level = 0
+    
+    for line in lines {
+        let trimmed = line.trim()
+        
+        // Skip comments and empty lines
+        if trimmed.starts_with("#") || trimmed.is_empty() {
+            continue
+        }
+        
+        let indent = line.len() - line.trim_start().len()
+        let level = indent / 2
+        
+        // Update stack based on level
+        while stack.len > level {
+            stack.pop()
+        }
+        
+        // Key-value pair
+        let parts = trimmed.split(":")
+        if parts.len >= 2 {
+            let key = parts[0].trim()
+            let value = parts[1].trim()
+            
+            let full_key = stack.join(".") + "." + key
+            if stack.len == 0 {
+                full_key = key
+            }
+            
+            config.values[full_key] = value
+            stack.push(key)
+        }
+    }
+    
+    return config
+}
+
+// INI
+fn parse_ini(data: string) -> Config {
+    let config = Config {
+        values: dict(),
+        sources: ["ini"]
+    }
+    
+    let lines = data.split("\n")
+    let current_section = ""
+    
+    for line in lines {
+        let trimmed = line.trim()
+        
+        // Skip comments and empty lines
+        if trimmed.starts_with(";") || trimmed.starts_with("#") || trimmed.is_empty() {
+            continue
+        }
+        
+        // Section header
+        if trimmed.starts_with("[") && trimmed.ends_with("]") {
+            current_section = trimmed.substring(1, trimmed.len() - 1)
+            continue
+        }
+        
+        // Key-value pair
+        let parts = trimmed.split("=")
+        if parts.len == 2 {
+            let key = parts[0].trim()
+            let value = parts[1].trim()
+            
+            let full_key = if current_section.is_empty() { key } else { current_section + "." + key }
+            config.values[full_key] = value
+        }
+    }
+    
+    return config
+}
+
+// Environment variables
+fn parse_env() -> Config {
+    let config = Config {
+        values: dict(),
+        sources: ["env"]
+    }
+    
+    let env_vars = os.env_vars()
+    for (key, value) in env_vars {
+        config.values[key] = value
+    }
+    
+    return config
+}
+
+// JSON config
+fn parse_json_config(data: string) -> Config {
+    let config = Config {
+        values: dict(),
+        sources: ["json"]
+    }
+    
+    let parsed = json.parse(data).unwrap()
+    flatten_json(parsed, "", config.values)
+    
+    return config
+}
+
+fn flatten_json(value: json.Value, prefix: string, target: dict) {
+    if value.kind == "object" {
+        for (key, val) in value.data {
+            let new_prefix = if prefix.is_empty() { key } else { prefix + "." + key }
+            flatten_json(val, new_prefix, target)
+        }
+    } else {
+        target[prefix] = value.data
+    }
+}
+
+// Config operations
+fn get(config: Config, key: string, default: string) -> string {
+    return config.values.get(key, default)
+}
+
+fn get_int(config: Config, key: string, default: int) -> int {
+    let value = config.values.get(key, default.to_string())
+    return value.to_int()
+}
+
+fn get_bool(config: Config, key: string, default: bool) -> bool {
+    let value = config.values.get(key, default.to_string())
+    return value == "true"
+}
+
+fn get_float(config: Config, key: string, default: float) -> float {
+    let value = config.values.get(key, default.to_string())
+    return value.to_float()
+}
+
+fn set(config: Config, key: string, value: string) {
+    config.values[key] = value
+}
+
+fn has(config: Config, key: string) -> bool {
+    return config.values.contains(key)
+}
+
+fn merge(configs: [Config]) -> Config {
+    let merged = Config {
+        values: dict(),
+        sources: []
+    }
+    
+    for config in configs {
+        for (key, value) in config.values {
+            merged.values[key] = value
+        }
+        merged.sources = merged.sources + config.sources
+    }
+    
+    return merged
+}
+
+// Load from file
+fn load(path: string) -> Config {
+    let ext = fs.basename(path).split(".").last()
+    let data = fs.read_file(path)
+    
+    match ext {
+        "toml" => return parse_toml(data)
+        "yaml" => return parse_yaml(data)
+        "yml" => return parse_yaml(data)
+        "ini" => return parse_ini(data)
+        "json" => return parse_json_config(data)
+        _ => throw "Unknown config format"
+    }
+}
+
+// Save to file
+fn save(config: Config, path: string, format: string) {
+    let data = ""
+    
+    match format {
+        "toml" => data = to_toml(config)
+        "yaml" => data = to_yaml(config)
+        "ini" => data = to_ini(config)
+        "json" => data = to_json(config)
+        _ => throw "Unknown format"
+    }
+    
+    fs.write_file(path, data)
+}
+
+fn to_toml(config: Config) -> string {
+    let result = ""
+    let sections = dict()
+    
+    for (key, value) in config.values {
+        let parts = key.split(".")
+        if parts.len > 1 {
+            let section = parts[0]
+            if !sections.contains(section) {
+                sections[section] = []
+            }
+            sections[section].push((parts[1], value))
+        } else {
+            result = result + key + " = \"" + value + "\"\n"
+        }
+    }
+    
+    for (section, pairs) in sections {
+        result = result + "\n[" + section + "]\n"
+        for (key, value) in pairs {
+            result = result + key + " = \"" + value + "\"\n"
+        }
+    }
+    
+    return result
+}
+
+fn to_yaml(config: Config) -> string {
+    let result = ""
+    
+    for (key, value) in config.values {
+        result = result + key + ": " + value + "\n"
+    }
+    
+    return result
+}
+
+fn to_ini(config: Config) -> string {
+    let result = ""
+    let sections = dict()
+    
+    for (key, value) in config.values {
+        let parts = key.split(".")
+        if parts.len > 1 {
+            let section = parts[0]
+            if !sections.contains(section) {
+                sections[section] = []
+            }
+            sections[section].push((parts[1], value))
+        } else {
+            result = result + key + " = " + value + "\n"
+        }
+    }
+    
+    for (section, pairs) in sections {
+        result = result + "\n[" + section + "]\n"
+        for (key, value) in pairs {
+            result = result + key + " = " + value + "\n"
+        }
+    }
+    
+    return result
+}
+
+fn to_json(config: Config) -> string {
+    let obj = dict()
+    
+    for (key, value) in config.values {
+        obj[key] = value
+    }
+    
+    return json.stringify_pretty(json.object(obj)).unwrap()
+}

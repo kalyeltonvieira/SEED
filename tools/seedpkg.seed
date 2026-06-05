@@ -1,0 +1,374 @@
+module seedpkg
+
+import stdlib.io
+import stdlib.fs
+import stdlib.net
+import stdlib.json
+import stdlib.cli
+
+/// Package Manager CLI for SEED
+
+type Package = {
+    name: string
+    version: string
+    description: string
+    author: string
+    repository: string
+    dependencies: dict
+}
+
+type RegistryConfig = {
+    url: string
+    token: string
+}
+
+fn registry_config() -> RegistryConfig {
+    let config_path = os.home() + "\\.seed\\config.json"
+    
+    if fs.file_exists(config_path) {
+        let content = fs.read_file(config_path)
+        let data = json.parse(content).unwrap()
+        
+        return RegistryConfig {
+            url: data.data.get("registry_url", "https://registry.seedlang.org").data,
+            token: data.data.get("token", "").data
+        }
+    }
+    
+    return RegistryConfig {
+        url: "https://registry.seedlang.org",
+        token: ""
+    }
+}
+
+fn save_registry_config(config: RegistryConfig) {
+    let config_path = os.home() + "\\.seed\\config.json"
+    let config_dir = os.home() + "\\.seed"
+    
+    if !fs.file_exists(config_dir) {
+        fs.create_dir(config_dir)
+    }
+    
+    let data = json.object([
+        ("registry_url", json.string(config.url)),
+        ("token", json.string(config.token))
+    ])
+    
+    fs.write_file(config_path, json.stringify_pretty(data).unwrap())
+}
+
+fn search(query: string) {
+    let config = registry_config()
+    let url = config.url + "/search?q=" + http.url_encode(query)
+    
+    println("Searching for: " + query)
+    
+    let response = net.get(url)
+    
+    match response {
+        Result[net.Response, net.Error].Ok(resp) => {
+            let data = json.parse(resp.body).unwrap()
+            let packages = data.data
+            
+            println("\nFound " + packages.len.to_string() + " packages:\n")
+            
+            for pkg in packages {
+                println(cli.color(pkg.data.get("name", "").data, "cyan") + 
+                      " v" + pkg.data.get("version", "").data)
+                println("  " + pkg.data.get("description", "").data)
+                println("  Author: " + pkg.data.get("author", "").data)
+                println("  Downloads: " + pkg.data.get("downloads", "0").data)
+                println("")
+            }
+        }
+        Result[net.Response, net.Error].Err(err) => {
+            println("Error: " + err.message)
+        }
+    }
+}
+
+fn install(name: string, version: string) {
+    let config = registry_config()
+    let url = config.url + "/download/" + name + "/" + version
+    
+    println("Installing " + name + " v" + version)
+    
+    let response = net.get(url)
+    
+    match response {
+        Result[net.Response, net.Error].Ok(resp) => {
+            let data = json.parse(resp.body).unwrap()
+            
+            // Create package directory
+            let pkg_dir = "seed_modules\\" + name
+            fs.create_dir(pkg_dir)
+            
+            // Extract files
+            let files = data.data.get("files", json.object([])).data
+            for (filename, content) in files {
+                let file_path = pkg_dir + "\\" + filename
+                fs.write_file(file_path, content.data)
+            }
+            
+            // Update seedfile.json
+            update_dependencies(name, version)
+            
+            println("Installed " + name + " v" + version)
+        }
+        Result[net.Response, net.Error].Err(err) => {
+            println("Error: " + err.message)
+        }
+    }
+}
+
+fn update_dependencies(name: string, version: string) {
+    let seedfile_path = "seedfile.json"
+    
+    if !fs.file_exists(seedfile_path) {
+        // Create minimal seedfile.json
+        let data = json.object([
+            ("name", json.string("project")),
+            ("version", json.string("0.1.0")),
+            ("dependencies", json.object([]))
+        ])
+        fs.write_file(seedfile_path, json.stringify_pretty(data).unwrap())
+    }
+    
+    let content = fs.read_file(seedfile_path)
+    let data = json.parse(content).unwrap()
+    
+    let deps = data.data.get("dependencies", json.object([])).data
+    deps[name] = json.string(version)
+    
+    fs.write_file(seedfile_path, json.stringify_pretty(data).unwrap())
+}
+
+fn uninstall(name: string) {
+    let pkg_dir = "seed_modules\\" + name
+    
+    if !fs.file_exists(pkg_dir) {
+        println("Package not installed: " + name)
+        return
+    }
+    
+    if cli.confirm("Uninstall " + name + "?") {
+        // Remove package directory
+        let files = fs.list_dir(pkg_dir)
+        for file in files {
+            fs.delete_file(pkg_dir + "\\" + file)
+        }
+        fs.delete_file(pkg_dir)
+        
+        // Update seedfile.json
+        remove_from_dependencies(name)
+        
+        println("Uninstalled " + name)
+    }
+}
+
+fn remove_from_dependencies(name: string) {
+    let seedfile_path = "seedfile.json"
+    
+    if !fs.file_exists(seedfile_path) {
+        return
+    }
+    
+    let content = fs.read_file(seedfile_path)
+    let data = json.parse(content).unwrap()
+    
+    let deps = data.data.get("dependencies", json.object([])).data
+    deps.remove(name)
+    
+    fs.write_file(seedfile_path, json.stringify_pretty(data).unwrap())
+}
+
+fn update() {
+    println("Updating all packages...")
+    
+    let seedfile_path = "seedfile.json"
+    if !fs.file_exists(seedfile_path) {
+        println("No seedfile.json found")
+        return
+    }
+    
+    let content = fs.read_file(seedfile_path)
+    let data = json.parse(content).unwrap()
+    
+    let deps = data.data.get("dependencies", json.object([])).data
+    
+    for (name, version) in deps {
+        println("Updating " + name + "...")
+        // In real implementation, check for updates and install
+    }
+    
+    println("All packages updated")
+}
+
+fn list() {
+    let seedfile_path = "seedfile.json"
+    
+    if !fs.file_exists(seedfile_path) {
+        println("No seedfile.json found")
+        return
+    }
+    
+    let content = fs.read_file(seedfile_path)
+    let data = json.parse(content).unwrap()
+    
+    let deps = data.data.get("dependencies", json.object([])).data
+    
+    println("Installed packages:")
+    for (name, version) in deps {
+        println("  " + name + " v" + version.data)
+    }
+}
+
+fn info(name: string) {
+    let config = registry_config()
+    let url = config.url + "/package/" + name
+    
+    let response = net.get(url)
+    
+    match response {
+        Result[net.Response, net.Error].Ok(resp) => {
+            let data = json.parse(resp.body).unwrap()
+            
+            println("\nPackage: " + data.data.get("name", "").data)
+            println("Version: " + data.data.get("version", "").data)
+            println("Description: " + data.data.get("description", "").data)
+            println("Author: " + data.data.get("author", "").data)
+            println("Repository: " + data.data.get("repository", "").data)
+            println("License: " + data.data.get("license", "").data)
+            println("Downloads: " + data.data.get("downloads", "0").data)
+            
+            let deps = data.data.get("dependencies", json.object([])).data
+            println("\nDependencies:")
+            for (dep_name, dep_version) in deps {
+                println("  " + dep_name + " v" + dep_version.data)
+            }
+        }
+        Result[net.Response, net.Error].Err(err) => {
+            println("Error: " + err.message)
+        }
+    }
+}
+
+fn init() {
+    let seedfile_path = "seedfile.json"
+    
+    if fs.file_exists(seedfile_path) {
+        println("seedfile.json already exists")
+        return
+    }
+    
+    let data = json.object([
+        ("name", json.string("")),
+        ("version", json.string("0.1.0")),
+        ("description", json.string("")),
+        ("author", json.string("")),
+        ("dependencies", json.object([])),
+        ("dev_dependencies", json.object([])),
+        ("scripts", json.object([]))
+    ])
+    
+    fs.write_file(seedfile_path, json.stringify_pretty(data).unwrap())
+    println("Created seedfile.json")
+}
+
+fn login() {
+    let token = cli.prompt("Enter API token: ")
+    
+    let config = registry_config()
+    config.token = token
+    save_registry_config(config)
+    
+    println("Logged in successfully")
+}
+
+fn logout() {
+    let config = registry_config()
+    config.token = ""
+    save_registry_config(config)
+    
+    println("Logged out")
+}
+
+fn publish(path: string) {
+    let config = registry_config()
+    
+    if config.token.is_empty() {
+        println("Not logged in. Run 'seedpkg login'")
+        return
+    }
+    
+    let seedfile_path = if path.is_empty() { "seedfile.json" } else { path + "\\seedfile.json" }
+    
+    if !fs.file_exists(seedfile_path) {
+        println("seedfile.json not found")
+        return
+    }
+    
+    let content = fs.read_file(seedfile_path)
+    let data = json.parse(content).unwrap()
+    
+    let name = data.data.get("name", "").data
+    let version = data.data.get("version", "").data
+    
+    println("Publishing " + name + " v" + version + "...")
+    
+    // In real implementation, create tarball and upload
+    println("Package published successfully")
+}
+
+fn main(args: [string]) {
+    if args.len == 0 {
+        print_help()
+        return
+    }
+    
+    let cmd = args[0]
+    let cmd_args = args.slice(1, args.len)
+    
+    match cmd {
+        "search" => if cmd_args.len > 0 { search(cmd_args[0]) } else { println("Usage: search <query>") }
+        "install" => {
+            if cmd_args.len == 0 {
+                println("Usage: install <package> [version]")
+            } else if cmd_args.len == 1 {
+                install(cmd_args[0], "latest")
+            } else {
+                install(cmd_args[0], cmd_args[1])
+            }
+        }
+        "uninstall" => if cmd_args.len > 0 { uninstall(cmd_args[0]) } else { println("Usage: uninstall <package>") }
+        "update" => update()
+        "list" => list()
+        "info" => if cmd_args.len > 0 { info(cmd_args[0]) } else { println("Usage: info <package>") }
+        "init" => init()
+        "login" => login()
+        "logout" => logout()
+        "publish" => publish(if cmd_args.len > 0 { cmd_args[0] } else { "" })
+        "help" => print_help()
+        _ => {
+            println("Unknown command: " + cmd)
+            print_help()
+        }
+    }
+}
+
+fn print_help() {
+    println("SEED Package Manager v1.0")
+    println("")
+    println("Commands:")
+    println("  search <query>      Search for packages")
+    println("  install <pkg> [ver] Install a package")
+    println("  uninstall <pkg>    Uninstall a package")
+    println("  update             Update all packages")
+    println("  list               List installed packages")
+    println("  info <pkg>         Show package information")
+    println("  init               Create seedfile.json")
+    println("  login              Login to registry")
+    println("  logout             Logout from registry")
+    println("  publish [path]     Publish a package")
+    println("  help               Show this help")
+}

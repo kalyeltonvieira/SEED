@@ -1,0 +1,17 @@
+module examples.fibonacci
+
+import stdlib.io
+import stdlib.math
+
+fn fib(n: Int) -> Int {
+    if n <= 1 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn main() effect io -> Int {
+    let result = fib(50)
+    print("fib(50) = " + to_string(result) + "\n")
+    return 0
+}
+
+// SEED should emit SEED002 and propose math.fib_matrix(n).

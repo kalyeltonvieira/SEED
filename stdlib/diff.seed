@@ -1,0 +1,52 @@
+module stdlib.diff
+
+/// Simple text diffing utility module
+
+pub type DiffOp = {
+    op: string, // "insert", "delete", "equal"
+    value: string
+}
+
+pub fn diff_lines(a: string, b: string) -> [DiffOp] {
+    let lines_a = a.replace("\r", "").split("\n")
+    let lines_b = b.replace("\r", "").split("\n")
+    
+    let result = []
+    let i = 0
+    let j = 0
+    
+    while i < lines_a.len || j < lines_b.len {
+        if i >= lines_a.len {
+            result.push(DiffOp { op: "insert", value: lines_b[j] })
+            j = j + 1
+        } else if j >= lines_b.len {
+            result.push(DiffOp { op: "delete", value: lines_a[i] })
+            i = i + 1
+        } else if lines_a[i] == lines_b[j] {
+            result.push(DiffOp { op: "equal", value: lines_a[i] })
+            i = i + 1
+            j = j + 1
+        } else {
+            // Check if line in A appears later in B
+            let found_in_b = false
+            for k in j..lines_b.len {
+                if lines_b[k] == lines_a[i] {
+                    found_in_b = true
+                    break
+                }
+            }
+            
+            if found_in_b {
+                // Insert lines from B until match is found
+                result.push(DiffOp { op: "insert", value: lines_b[j] })
+                j = j + 1
+            } else {
+                // Delete line from A
+                result.push(DiffOp { op: "delete", value: lines_a[i] })
+                i = i + 1
+            }
+        }
+    }
+    
+    return result
+}

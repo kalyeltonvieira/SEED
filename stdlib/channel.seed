@@ -1,0 +1,46 @@
+module stdlib.channel
+
+/// Channel for async communication
+
+pub type Channel<T> {
+    buffer: [T],
+    capacity: int,
+    senders: int,
+    receivers: int
+}
+
+pub fn channel<T>(capacity: int) -> Channel<T> {
+    return syscall.channel_new(capacity)
+}
+
+pub fn send<T>(ch: &mut Channel<T>, value: T) {
+    syscall.channel_send(ch, value)
+}
+
+pub fn recv<T>(ch: &Channel<T>) -> Option<T> {
+    return syscall.channel_recv(ch)
+}
+
+pub fn try_send<T>(ch: &mut Channel<T>, value: T) -> bool {
+    return syscall.channel_try_send(ch, value)
+}
+
+pub fn try_recv<T>(ch: &Channel<T>) -> Option<T> {
+    return syscall.channel_try_recv(ch)
+}
+
+pub fn close<T>(ch: &mut Channel<T>) {
+    syscall.channel_close(ch)
+}
+
+pub fn is_closed<T>(ch: &Channel<T>) -> bool {
+    return syscall.channel_is_closed(ch)
+}
+
+pub fn len<T>(ch: &Channel<T>) -> int {
+    return syscall.channel_len(ch)
+}
+
+pub fn cap<T>(ch: &Channel<T>) -> int {
+    return ch.capacity
+}

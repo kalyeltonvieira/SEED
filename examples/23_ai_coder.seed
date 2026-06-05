@@ -1,0 +1,506 @@
+module ai_coder
+
+/// AI CODER - Rede Neural que gera código SEED
+/// Feed-forward network com backpropagation, treinado com exemplos do ecossistema
+
+type NeuralNetwork = {
+    layers: [Layer]
+    learning_rate: float
+}
+
+type Layer = {
+    weights: [[float]]
+    biases: [float]
+    output: [float]
+}
+
+type Token = {
+    id: int
+    text: string
+    type: string
+}
+
+type Tokenizer = {
+    vocab: dict
+    vocab_size: int
+}
+
+type TrainingExample = {
+    input: string
+    output: string
+}
+
+fn neural_network(input_size: int, hidden_sizes: [int], output_size: int) -> NeuralNetwork {
+    let layers = []
+    let prev_size = input_size
+    
+    for size in hidden_sizes {
+        let weights = []
+        for i in 0..size {
+            let row = []
+            for j in 0..prev_size {
+                row.push((math.random() * 2 - 1) * 0.1)
+            }
+            weights.push(row)
+        }
+        
+        let biases = []
+        for i in 0..size {
+            biases.push(0.0)
+        }
+        
+        layers.push(Layer {
+            weights: weights,
+            biases: biases,
+            output: []
+        })
+        
+        prev_size = size
+    }
+    
+    // Output layer
+    let weights = []
+    for i in 0..output_size {
+        let row = []
+        for j in 0..prev_size {
+            row.push((math.random() * 2 - 1) * 0.1)
+        }
+        weights.push(row)
+    }
+    
+    let biases = []
+    for i in 0..output_size {
+        biases.push(0.0)
+    }
+    
+    layers.push(Layer {
+        weights: weights,
+        biases: biases,
+        output: []
+    })
+    
+    return NeuralNetwork {
+        layers: layers,
+        learning_rate: 0.01
+    }
+}
+
+fn sigmoid(x: float) -> float {
+    return 1.0 / (1.0 + math.exp(-x))
+}
+
+fn sigmoid_derivative(x: float) -> float {
+    return x * (1.0 - x)
+}
+
+fn relu(x: float) -> float {
+    if x > 0 {
+        return x
+    }
+    return 0.0
+}
+
+fn relu_derivative(x: float) -> float {
+    if x > 0 {
+        return 1.0
+    }
+    return 0.0
+}
+
+fn forward(nn: NeuralNetwork, input: [float]) -> [float] {
+    let current = input
+    
+    for layer in nn.layers {
+        let output = []
+        
+        for i in 0..layer.weights.len {
+            let sum = layer.biases[i]
+            
+            for j in 0..current.len {
+                sum = sum + layer.weights[i][j] * current[j]
+            }
+            
+            output.push(sigmoid(sum))
+        }
+        
+        layer.output = output
+        current = output
+    }
+    
+    return current
+}
+
+fn backward(nn: NeuralNetwork, input: [float], target: [float]) {
+    let output = forward(nn, input)
+    
+    // Calculate output error
+    let errors = []
+    for i in 0..output.len {
+        errors.push(target[i] - output[i])
+    }
+    
+    // Backpropagate
+    let deltas = []
+    
+    // Output layer deltas
+    for i in 0..errors.len {
+        let delta = errors[i] * sigmoid_derivative(output[i])
+        deltas.push(delta)
+    }
+    
+    // Hidden layers
+    let layer_deltas = [deltas]
+    
+    for i in (nn.layers.len - 2)..0 {
+        let layer = nn.layers[i]
+        let next_layer = nn.layers[i + 1]
+        let new_deltas = []
+        
+        for j in 0..layer.output.len {
+            let error = 0.0
+            
+            for k in 0..next_layer.weights.len {
+                error = error + layer_deltas[0][k] * next_layer.weights[k][j]
+            }
+            
+            new_deltas.push(error * sigmoid_derivative(layer.output[j]))
+        }
+        
+        layer_deltas = [new_deltas] + layer_deltas
+    }
+    
+    // Update weights
+    let layer_inputs = [input]
+    
+    for i in 0..nn.layers.len {
+        let layer = nn.layers[i]
+        let deltas = layer_deltas[i]
+        let layer_input = layer_inputs[i]
+        
+        for j in 0..layer.weights.len {
+            for k in 0..layer.weights[j].len {
+                layer.weights[j][k] = layer.weights[j][k] + nn.learning_rate * deltas[j] * layer_input[k]
+            }
+            layer.biases[j] = layer.biases[j] + nn.learning_rate * deltas[j]
+        }
+    }
+}
+
+fn train(nn: NeuralNetwork, examples: [TrainingExample], epochs: int) {
+    println("Treinando com " + examples.len.to_string() + " exemplos...")
+    
+    for epoch in 0..epochs {
+        let total_loss = 0.0
+        
+        for example in examples {
+            let input = tokenize_input(example.input)
+            let target = tokenize_output(example.output)
+            
+            forward(nn, input)
+            backward(nn, input, target)
+            
+            let output = forward(nn, input)
+            let loss = calculate_loss(output, target)
+            total_loss = total_loss + loss
+        }
+        
+        let avg_loss = total_loss / examples.len
+        
+        if epoch % 10 == 0 {
+            println("Época " + epoch.to_string() + "/" + epochs.to_string() + ": loss " + avg_loss.to_string())
+        }
+    }
+    
+    println("Treinamento concluído.")
+}
+
+fn calculate_loss(output: [float], target: [float]) -> float {
+    let loss = 0.0
+    
+    for i in 0..output.len {
+        let diff = target[i] - output[i]
+        loss = loss + diff * diff
+    }
+    
+    return loss / output.len
+}
+
+// Tokenizer
+fn tokenizer() -> Tokenizer {
+    return Tokenizer {
+        vocab: dict(),
+        vocab_size: 0
+    }
+}
+
+fn build_vocab(tokenizer: Tokenizer, examples: [TrainingExample]) {
+    let all_text = ""
+    
+    for example in examples {
+        all_text = all_text + example.input + " " + example.output + " "
+    }
+    
+    let tokens = tokenize(all_text)
+    let unique_tokens = dict()
+    
+    for token in tokens {
+        unique_tokens[token] = true
+    }
+    
+    let id = 0
+    for (token, _) in unique_tokens {
+        tokenizer.vocab[token] = id
+        id = id + 1
+    }
+    
+    tokenizer.vocab_size = id
+}
+
+fn tokenize(text: string) -> [string] {
+    let tokens = []
+    let current = ""
+    
+    for c in text {
+        if c == " " || c == "\n" || c == "\t" || c == "(" || c == ")" || c == "{" || c == "}" || c == ";" || c == "=" {
+            if current.len > 0 {
+                tokens.push(current)
+                current = ""
+            }
+            if c != " " && c != "\n" && c != "\t" {
+                tokens.push(c)
+            }
+        } else {
+            current = current + c
+        }
+    }
+    
+    if current.len > 0 {
+        tokens.push(current)
+    }
+    
+    return tokens
+}
+
+fn tokenize_input(text: string) -> [float] {
+    let tokens = tokenize(text)
+    let tokenizer = tokenizer()
+    
+    // Build simple vocab on the fly
+    let vocab = dict()
+    let id = 0
+    for token in tokens {
+        if !vocab.contains(token) {
+            vocab[token] = id
+            id = id + 1
+        }
+    }
+    
+    let vector = []
+    for token in tokens {
+        if vocab.contains(token) {
+            vector.push(vocab[token].to_float() / id)
+        } else {
+            vector.push(0.0)
+        }
+    }
+    
+    return vector
+}
+
+fn tokenize_output(text: string) -> [float] {
+    let tokens = tokenize(text)
+    
+    // Simple one-hot encoding for demo
+    let vector = []
+    for i in 0..50 {
+        if i < tokens.len {
+            vector.push(tokens[i].len().to_float() / 20.0)
+        } else {
+            vector.push(0.0)
+        }
+    }
+    
+    return vector
+}
+
+fn detokenize(vector: [float], tokenizer: Tokenizer) -> string {
+    let tokens = []
+    
+    for i in 0..vector.len {
+        if vector[i] > 0.5 {
+            for (token, id) in tokenizer.vocab {
+                if id == i {
+                    tokens.push(token)
+                }
+            }
+        }
+    }
+    
+    return tokens.join(" ")
+}
+
+// Code Generation
+fn generate_code(nn: NeuralNetwork, description: string, tokenizer: Tokenizer) -> string {
+    let input = tokenize_input(description)
+    let output = forward(nn, input)
+    
+    let code = detokenize(output, tokenizer)
+    
+    // Post-process to make valid SEED code
+    return post_process(code)
+}
+
+fn post_process(code: string) -> string {
+    // Add proper formatting
+    let lines = code.split(" ")
+    let formatted = []
+    
+    for line in lines {
+        if line.len > 0 {
+            formatted.push(line)
+        }
+    }
+    
+    return formatted.join(" ")
+}
+
+// Dream mode - generate variations and test
+fn dream_mode(nn: NeuralNetwork, tokenizer: Tokenizer, iterations: int) {
+    println("Modo sonho: gerando variações e testando...")
+    
+    let prompts = [
+        "função que ordena lista",
+        "função que filtra array",
+        "função que mapeia valores",
+        "função que soma números"
+    ]
+    
+    for i in 0..iterations {
+        let prompt = prompts[i % prompts.len]
+        let code = generate_code(nn, prompt, tokenizer)
+        
+        println("Geração " + (i + 1).to_string() + ": " + prompt)
+        println("  " + code)
+        
+        // Test if code compiles (simulated)
+        if is_valid_code(code) {
+            println("  ✓ Código válido")
+        } else {
+            println("  ✗ Código inválido - aprendendo")
+            // Backpropagate with negative feedback
+        }
+    }
+}
+
+fn is_valid_code(code: string) -> bool {
+    // Simple validation - check for basic SEED syntax
+    return code.contains("fn") && code.contains("->")
+}
+
+// Load training examples from ecosystem
+fn load_examples() -> [TrainingExample] {
+    let examples = []
+    
+    // Read all example files
+    let example_files = [
+        "D:\\SEED\\examples\\01_hello_world.seed",
+        "D:\\SEED\\examples\\02_calculadora.seed",
+        "D:\\SEED\\examples\\03_todo_list.seed",
+        "D:\\SEED\\examples\\04_web_server.seed",
+        "D:\\SEED\\examples\\05_chat.seed",
+        "D:\\SEED\\examples\\06_blog.seed",
+        "D:\\SEED\\examples\\07_game_of_life.seed",
+        "D:\\SEED\\examples\\08_snake.seed",
+        "D:\\SEED\\examples\\09_tetris.seed",
+        "D:\\SEED\\examples\\10_raytracer.seed"
+    ]
+    
+    for file in example_files {
+        if fs.file_exists(file) {
+            let content = fs.read_file(file)
+            let description = generate_description_from_code(content)
+            
+            examples.push(TrainingExample {
+                input: description,
+                output: content
+            })
+        }
+    }
+    
+    return examples
+}
+
+fn generate_description_from_code(code: string) -> string {
+    // Simple description generation based on code content
+    if code.contains("println") {
+        return "função que imprime texto"
+    }
+    if code.contains("for") {
+        return "função que itera sobre lista"
+    }
+    if code.contains("if") {
+        return "função com condicional"
+    }
+    if code.contains("+") {
+        return "função que soma valores"
+    }
+    if code.contains("*") {
+        return "função que multiplica"
+    }
+    
+    return "função genérica"
+}
+
+// Main
+fn main() {
+    println("=== AI CODER v1.0 ===")
+    println("Rede Neural que gera código SEED")
+    println("")
+    
+    println("Carregando exemplos do ecossistema...")
+    let examples = load_examples()
+    println("Carregados " + examples.len.to_string() + " exemplos")
+    
+    println("Construindo vocabulário...")
+    let tok = tokenizer()
+    build_vocab(tok, examples)
+    println("Vocabulário: " + tok.vocab_size.to_string() + " tokens")
+    
+    println("Criando rede neural...")
+    let nn = neural_network(100, [64, 64], 200)
+    
+    println("Iniciando treinamento...")
+    train(nn, examples, 100)
+    
+    println("\nModo interativo:")
+    println("Digite 'treinar' para treinar mais")
+    println("Digite 'gerar <descrição>' para gerar código")
+    println("Digite 'sonho' para modo sonho")
+    println("Digite 'exit' para sair")
+    
+    loop {
+        print("seed> ")
+        let input = io.read_line()
+        
+        if input == "exit" {
+            break
+        }
+        
+        if input == "treinar" {
+            train(nn, examples, 50)
+        } else if input.starts_with("gerar") {
+            let description = input.substring(7, input.len())
+            let code = generate_code(nn, description, tok)
+            println("\nCódigo gerado:")
+            println(code)
+        } else if input == "sonho" {
+            dream_mode(nn, tok, 10)
+        } else if input.len > 0 {
+            let code = generate_code(nn, input, tok)
+            println("\nCódigo gerado:")
+            println(code)
+        }
+    }
+    
+    println("\nAI CODER encerrado.")
+}

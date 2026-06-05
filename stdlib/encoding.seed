@@ -1,0 +1,240 @@
+module stdlib.encoding
+
+/// Codificação: Base64, Hex, UTF-8, URL encoding
+
+// Base64
+const BASE64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+fn base64_encode(data: string) -> string {
+    let result = ""
+    let i = 0
+    
+    while i < data.len {
+        let b1 = data[i]
+        let b2 = if i + 1 < data.len { data[i + 1] } else { 0 }
+        let b3 = if i + 2 < data.len { data[i + 2] } else { 0 }
+        
+        let combined = (b1 << 16) | (b2 << 8) | b3
+        
+        result = result + BASE64_CHARS[(combined >> 18) & 0x3F]
+        result = result + BASE64_CHARS[(combined >> 12) & 0x3F]
+        result = result + if i + 1 < data.len { BASE64_CHARS[(combined >> 6) & 0x3F] } else { "=" }
+        result = result + if i + 2 < data.len { BASE64_CHARS[combined & 0x3F] } else { "=" }
+        
+        i = i + 3
+    }
+    
+    return result
+}
+
+fn base64_decode(data: string) -> string {
+    let result = ""
+    let i = 0
+    
+    while i < data.len {
+        let c1 = BASE64_CHARS.index_of(data[i])
+        let c2 = BASE64_CHARS.index_of(data[i + 1])
+        let c3 = if i + 2 < data.len && data[i + 2] != "=" { BASE64_CHARS.index_of(data[i + 2]) } else { 0 }
+        let c4 = if i + 3 < data.len && data[i + 3] != "=" { BASE64_CHARS.index_of(data[i + 3]) } else { 0 }
+        
+        let combined = (c1 << 18) | (c2 << 12) | (c3 << 6) | c4
+        
+        result = result + (combined >> 16).to_char()
+        if data[i + 2] != "=" {
+            result = result + ((combined >> 8) & 0xFF).to_char()
+        }
+        if data[i + 3] != "=" {
+            result = result + (combined & 0xFF).to_char()
+        }
+        
+        i = i + 4
+    }
+    
+    return result
+}
+
+// Hex
+fn hex_encode(data: string) -> string {
+    let result = ""
+    let hex_chars = "0123456789abcdef"
+    
+    for byte in data {
+        result = result + hex_chars[(byte >> 4) & 0x0F]
+        result = result + hex_chars[byte & 0x0F]
+    }
+    
+    return result
+}
+
+fn hex_decode(data: string) -> string {
+    let result = ""
+    
+    for i in 0..data.len step 2 {
+        let high = hex_to_int(data[i])
+        let low = hex_to_int(data[i + 1])
+        result = result + ((high << 4) | low).to_char()
+    }
+    
+    return result
+}
+
+fn hex_to_int(c: string) -> int {
+    if c >= "0" && c <= "9" {
+        return c.to_int() - "0".to_int()
+    } else if c >= "a" && c <= "f" {
+        return c.to_int() - "a".to_int() + 10
+    } else if c >= "A" && c <= "F" {
+        return c.to_int() - "A".to_int() + 10
+    }
+    return 0
+}
+
+// UTF-8
+fn utf8_encode(s: string) -> [int] {
+    let bytes = []
+    
+    for char in s {
+        let code = char.to_int()
+        
+        if code < 0x80 {
+            bytes.push(code)
+        } else if code < 0x800 {
+            bytes.push(0xC0 | (code >> 6))
+            bytes.push(0x80 | (code & 0x3F))
+        } else if code < 0x10000 {
+            bytes.push(0xE0 | (code >> 12))
+            bytes.push(0x80 | ((code >> 6) & 0x3F))
+            bytes.push(0x80 | (code & 0x3F))
+        } else {
+            bytes.push(0xF0 | (code >> 18))
+            bytes.push(0x80 | ((code >> 12) & 0x3F))
+            bytes.push(0x80 | ((code >> 6) & 0x3F))
+            bytes.push(0x80 | (code & 0x3F))
+        }
+    }
+    
+    return bytes
+}
+
+fn utf8_decode(bytes: [int]) -> string {
+    let result = ""
+    let i = 0
+    
+    while i < bytes.len {
+        let b1 = bytes[i]
+        
+        if b1 < 0x80 {
+            result = result + b1.to_char()
+            i = i + 1
+        } else if (b1 & 0xE0) == 0xC0 {
+            let b2 = bytes[i + 1]
+            let code = ((b1 & 0x1F) << 6) | (b2 & 0x3F)
+            result = result + code.to_char()
+            i = i + 2
+        } else if (b1 & 0xF0) == 0xE0 {
+            let b2 = bytes[i + 1]
+            let b3 = bytes[i + 2]
+            let code = ((b1 & 0x0F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F)
+            result = result + code.to_char()
+            i = i + 3
+        } else if (b1 & 0xF8) == 0xF0 {
+            let b2 = bytes[i + 1]
+            let b3 = bytes[i + 2]
+            let b4 = bytes[i + 3]
+            let code = ((b1 & 0x07) << 18) | ((b2 & 0x3F) << 12) | ((b3 & 0x3F) << 6) | (b4 & 0x3F)
+            result = result + code.to_char()
+            i = i + 4
+        }
+    }
+    
+    return result
+}
+
+// URL encoding
+fn url_encode(s: string) -> string {
+    let result = ""
+    let safe_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~"
+    
+    for c in s {
+        if safe_chars.contains(c) {
+            result = result + c
+        } else {
+            result = result + "%" + hex_encode(c)
+        }
+    }
+    
+    return result
+}
+
+fn url_decode(s: string) -> string {
+    let result = ""
+    let i = 0
+    
+    while i < s.len {
+        if s[i] == "%" && i + 2 < s.len {
+            let hex = s.substring(i + 1, i + 3)
+            result = result + hex_decode(hex)
+            i = i + 3
+        } else if s[i] == "+" {
+            result = result + " "
+            i = i + 1
+        } else {
+            result = result + s[i]
+            i = i + 1
+        }
+    }
+    
+    return result
+}
+
+// HTML encoding
+fn html_encode(s: string) -> string {
+    let result = s
+    result = result.replace("&", "&amp;")
+    result = result.replace("<", "&lt;")
+    result = result.replace(">", "&gt;")
+    result = result.replace("\"", "&quot;")
+    result = result.replace("'", "&#39;")
+    return result
+}
+
+fn html_decode(s: string) -> string {
+    let result = s
+    result = result.replace("&amp;", "&")
+    result = result.replace("&lt;", "<")
+    result = result.replace("&gt;", ">")
+    result = result.replace("&quot;", "\"")
+    result = result.replace("&#39;", "'")
+    return result
+}
+
+// Binary operations
+fn bytes_to_int(bytes: [int], big_endian: bool) -> int {
+    let result = 0
+    
+    if big_endian {
+        for byte in bytes {
+            result = (result << 8) | byte
+        }
+    } else {
+        for i in bytes.len..0 {
+            result = (result << 8) | bytes[i - 1]
+        }
+    }
+    
+    return result
+}
+
+fn int_to_bytes(n: int, size: int, big_endian: bool) -> [int] {
+    let bytes = []
+    
+    for i in 0..size {
+        bytes.push((n >> (i * 8)) & 0xFF)
+    }
+    
+    if big_endian {
+        bytes.reverse()
+    }
+    
+    return bytes
+}

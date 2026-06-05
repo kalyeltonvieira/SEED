@@ -1,0 +1,186 @@
+module compiler.tests.optimizer_test
+
+/// Testes do Optimizer SEED
+/// Verifica se o optimizer aplica otimizações corretamente
+
+use compiler.lexer
+use compiler.parser
+use compiler.typechecker
+use compiler.codegen
+use compiler.optimizer
+
+fn main() {
+    println("=== Testes do Optimizer SEED ===")
+    println("")
+    
+    test_peephole_optimization()
+    test_constant_folding()
+    test_dead_code_elimination()
+    test_tail_call_optimization()
+    test_allocation_optimization()
+    
+    println("")
+    println("Todos os testes do optimizer passaram!")
+}
+
+fn test_peephole_optimization() {
+    println("Testando otimização peephole...")
+    
+    let bytecode = create_test_bytecode()
+    let optimized = optimizer.peephole_optimize(bytecode)
+    
+    if optimized.instructions.len >= bytecode.instructions.len {
+        println("  [FALHOU] Peephole não removeu instruções")
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_constant_folding() {
+    println("Testando constant folding...")
+    
+    let bytecode = create_constant_fold_bytecode()
+    let optimized = optimizer.constant_folding(bytecode)
+    
+    if optimized.instructions.len >= bytecode.instructions.len {
+        println("  [FALHOU] Constant folding não reduziu instruções")
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_dead_code_elimination() {
+    println("Testando eliminação de código morto...")
+    
+    let bytecode = create_dead_code_bytecode()
+    let optimized = optimizer.dead_code_elimination(bytecode)
+    
+    if optimized.instructions.len >= bytecode.instructions.len {
+        println("  [FALHOU] Dead code elimination não removeu código")
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_tail_call_optimization() {
+    println("Testando otimização de tail call...")
+    
+    let bytecode = create_tail_call_bytecode()
+    let optimized = optimizer.tail_call_optimization(bytecode)
+    
+    // Verificar se CALL; RET foi transformado em JMP
+    let has_jmp = false
+    for instr in optimized.instructions {
+        if instr.opcode == 6 { // OP_JMP
+            has_jmp = true
+            break
+        }
+    }
+    
+    if !has_jmp {
+        println("  [FALHOU] Tail call não otimizado para JMP")
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_allocation_optimization() {
+    println("Testando otimização de alocação...")
+    
+    let bytecode = create_alloc_bytecode()
+    let optimized = optimizer.optimize_allocations(bytecode)
+    
+    if optimized.instructions.len >= bytecode.instructions.len {
+        println("  [FALHOU] Alocação não otimizada")
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn create_test_bytecode() -> Bytecode {
+    return Bytecode {
+        instructions: [
+            Instruction { opcode: 8, operands: [1], line: 1 },  // PUSH r1
+            Instruction { opcode: 9, operands: [1], line: 2 },  // POP r1 (no-op)
+            Instruction { opcode: 8, operands: [2], line: 3 },  // PUSH r2
+            Instruction { opcode: 9, operands: [2], line: 4 }   // POP r2 (no-op)
+        ],
+        constants: [],
+        debug_info: DebugInfo {
+            source_map: [],
+            line_map: []
+        }
+    }
+}
+
+fn create_constant_fold_bytecode() -> Bytecode {
+    return Bytecode {
+        instructions: [
+            Instruction { opcode: 8, operands: [0], line: 1 },  // PUSH const 42
+            Instruction { opcode: 8, operands: [1], line: 2 },  // PUSH const 10
+            Instruction { opcode: 12, operands: [], line: 3 }  // ADD
+        ],
+        constants: [
+            Value { type: ValueType.Integer, data: "42" },
+            Value { type: ValueType.Integer, data: "10" }
+        ],
+        debug_info: DebugInfo {
+            source_map: [],
+            line_map: []
+        }
+    }
+}
+
+fn create_dead_code_bytecode() -> Bytecode {
+    return Bytecode {
+        instructions: [
+            Instruction { opcode: 8, operands: [0], line: 1 },  // PUSH
+            Instruction { opcode: 11, operands: [], line: 2 }, // RET
+            Instruction { opcode: 8, operands: [1], line: 3 },  // Código morto após RET
+            Instruction { opcode: 8, operands: [2], line: 4 }   // Código morto após RET
+        ],
+        constants: [
+            Value { type: ValueType.Integer, data: "42" },
+            Value { type: ValueType.Integer, data: "10" },
+            Value { type: ValueType.Integer, data: "20" }
+        ],
+        debug_info: DebugInfo {
+            source_map: [],
+            line_map: []
+        }
+    }
+}
+
+fn create_tail_call_bytecode() -> Bytecode {
+    return Bytecode {
+        instructions: [
+            Instruction { opcode: 10, operands: [100], line: 1 }, // CALL fn
+            Instruction { opcode: 11, operands: [], line: 2 }    // RET (tail call)
+        ],
+        constants: [],
+        debug_info: DebugInfo {
+            source_map: [],
+            line_map: []
+        }
+    }
+}
+
+fn create_alloc_bytecode() -> Bytecode {
+    return Bytecode {
+        instructions: [
+            Instruction { opcode: 1, operands: [100], line: 1 },  // ALLOC 100
+            Instruction { opcode: 1, operands: [200], line: 2 },  // ALLOC 200
+            Instruction { opcode: 1, operands: [50], line: 3 }   // ALLOC 50
+        ],
+        constants: [],
+        debug_info: DebugInfo {
+            source_map: [],
+            line_map: []
+        }
+    }
+}

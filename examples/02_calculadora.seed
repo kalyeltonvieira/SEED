@@ -1,0 +1,47 @@
+module calculadora
+
+import stdlib.io
+import stdlib.string
+
+/// Calculadora interativa com +, -, *, /
+fn main() {
+    println("=== Calculadora SEED ===")
+    println("Operações disponíveis: +, -, *, /")
+    println("Digite 'sair' para encerrar")
+    println("")
+    
+    loop {
+        let input = prompt("Expressão (ex: 5 + 3): ")
+        
+        if input == "sair" {
+            println("Até logo!")
+            break
+        }
+        
+        let parts = input.split(" ")
+        if parts.len != 3 {
+            println("Erro: formato inválido. Use: número operador número")
+            continue
+        }
+        
+        let a = parts[0].to_float()
+        let op = parts[1]
+        let b = parts[2].to_float()
+        
+        let result = match op {
+            "+" => a + b
+            "-" => a - b
+            "*" => a * b
+            "/" => if b == 0 { "Erro: divisão por zero" } else { a / b }
+            _ => "Erro: operador inválido"
+        }
+        
+        println("Resultado: " + result.to_string())
+        println("")
+    }
+}
+
+fn prompt(msg: string) -> string {
+    print(msg)
+    return read_line()
+}

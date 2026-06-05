@@ -1,0 +1,242 @@
+module compiler.tests.compiler_test
+
+/// Testes de Integração do Compilador SEED
+/// Verifica se todas as fases funcionam juntas corretamente
+
+use compiler.lexer
+use compiler.parser
+use compiler.typechecker
+use compiler.codegen
+use compiler.optimizer
+use compiler.compiler
+
+fn main() {
+    println("=== Testes de Integração do Compilador SEED ===")
+    println("")
+    
+    test_full_compilation()
+    test_hello_world()
+    test_arithmetic()
+    test_functions()
+    test_control_flow()
+    test_optimization_levels()
+    test_error_handling()
+    
+    println("")
+    println("Todos os testes de integração passaram!")
+}
+
+fn test_full_compilation() {
+    println("Testando compilação completa...")
+    
+    let source = "fn main() { println(\"hello\") }"
+    let options = CompileOptions {
+        optimize: false,
+        debug: false,
+        output: "test_output.seedc"
+    }
+    
+    let result = compiler.compile_file("dummy.seed", options)
+    if result.is_error {
+        println("  [FALHOU] Erro de compilação: " + result.error)
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_hello_world() {
+    println("Testando Hello World...")
+    
+    let source = "fn main() { println(\"Hello, World!\") }"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    let typed_result = typechecker.typecheck(ast_result.value)
+    if typed_result.is_error {
+        println("  [FALHOU] Erro de tipo: " + typed_result.error)
+        exit(1)
+    }
+    
+    let codegen_result = codegen.codegen(typed_result.value)
+    if codegen_result.is_error {
+        println("  [FALHOU] Erro de geração de código: " + codegen_result.error)
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_arithmetic() {
+    println("Testando aritmética...")
+    
+    let source = "fn main() { let x = 1 + 2 * 3; let y = (4 + 5) / 2 }"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    let typed_result = typechecker.typecheck(ast_result.value)
+    if typed_result.is_error {
+        println("  [FALHOU] Erro de tipo: " + typed_result.error)
+        exit(1)
+    }
+    
+    let codegen_result = codegen.codegen(typed_result.value)
+    if codegen_result.is_error {
+        println("  [FALHOU] Erro de geração de código: " + codegen_result.error)
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_functions() {
+    println("Testando funções...")
+    
+    let source = "fn soma(a: int, b: int) -> int { a + b }\n\nfn main() { println(soma(10, 20)) }"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    let typed_result = typechecker.typecheck(ast_result.value)
+    if typed_result.is_error {
+        println("  [FALHOU] Erro de tipo: " + typed_result.error)
+        exit(1)
+    }
+    
+    let codegen_result = codegen.codegen(typed_result.value)
+    if codegen_result.is_error {
+        println("  [FALHOU] Erro de geração de código: " + codegen_result.error)
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_control_flow() {
+    println("Testando fluxo de controle...")
+    
+    let source = "fn main() {\n    if x > 0 {\n        println(\"positive\")\n    } else {\n        println(\"negative\")\n    }\n}"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    let typed_result = typechecker.typecheck(ast_result.value)
+    if typed_result.is_error {
+        println("  [FALHOU] Erro de tipo: " + typed_result.error)
+        exit(1)
+    }
+    
+    let codegen_result = codegen.codegen(typed_result.value)
+    if codegen_result.is_error {
+        println("  [FALHOU] Erro de geração de código: " + codegen_result.error)
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_optimization_levels() {
+    println("Testando níveis de otimização...")
+    
+    let source = "fn main() { let x = 1 + 2 + 3 + 4 }"
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    let typed_result = typechecker.typecheck(ast_result.value)
+    if typed_result.is_error {
+        println("  [FALHOU] Erro de tipo: " + typed_result.error)
+        exit(1)
+    }
+    
+    let codegen_result = codegen.codegen(typed_result.value)
+    if codegen_result.is_error {
+        println("  [FALHOU] Erro de geração de código: " + codegen_result.error)
+        exit(1)
+    }
+    
+    // Testar diferentes níveis de otimização
+    let opt0 = optimizer.optimizer(codegen_result.value, 0)
+    let opt1 = optimizer.optimizer(codegen_result.value, 1)
+    let opt2 = optimizer.optimizer(codegen_result.value, 2)
+    
+    if opt2.instructions.len >= opt0.instructions.len {
+        println("  [FALHOU] Otimização nível 2 não reduziu instruções")
+        exit(1)
+    }
+    
+    println("  [OK]")
+}
+
+fn test_error_handling() {
+    println("Testando tratamento de erros...")
+    
+    let source = "fn main() { let x: int = \"hello\" }"  // Erro de tipo
+    let (tokens, errors) = lexer.tokenize(source)
+    
+    if errors.len > 0 {
+        println("  [FALHOU] Erros léxicos inesperados: " + errors.join(", "))
+        exit(1)
+    }
+    
+    let ast_result = parser.parse(tokens)
+    if ast_result.is_error {
+        println("  [FALHOU] Erro de parsing: " + ast_result.error)
+        exit(1)
+    }
+    
+    let typed_result = typechecker.typecheck(ast_result.value)
+    if typed_result.is_ok {
+        println("  [FALHOU] Esperado erro de tipo, mas não houve erro")
+        exit(1)
+    }
+    
+    println("  [OK]")
+}

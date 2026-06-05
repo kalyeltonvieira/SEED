@@ -1,0 +1,10 @@
+module stdlib.ffi
+
+/// Foreign Function Interface module
+
+extern fn printf(msg: string)
+extern fn scanf(fmt: string, ...)
+extern fn malloc(size: int) -> int
+extern fn free(ptr: int)
+extern fn memcpy(dst: int, src: int, n: int)
+extern fn strlen(s: string) -> int

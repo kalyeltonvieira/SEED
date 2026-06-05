@@ -1,0 +1,72 @@
+module stdlib.sqlite
+
+/// SQLite database module
+
+pub type SQLite = {
+    path: string
+}
+
+pub type SQLiteResult = {
+    columns: [string],
+    rows: [[string]]
+}
+
+pub fn open(path: string) -> Result<SQLite, string> {
+    return syscall.sqlite_open(path)
+}
+
+pub fn close(db: SQLite) -> Result<void, string> {
+    return syscall.sqlite_close(db)
+}
+
+pub fn execute(db: SQLite, sql: string) -> Result<void, string> {
+    return syscall.sqlite_execute(db, sql)
+}
+
+pub fn query(db: SQLite, sql: string) -> Result<SQLiteResult, string> {
+    return syscall.sqlite_query(db, sql)
+}
+
+pub fn prepare(db: SQLite, sql: string) -> Result<SQLiteStatement, string> {
+    return syscall.sqlite_prepare(db, sql)
+}
+
+pub type SQLiteStatement = {
+    stmt: int
+}
+
+pub fn bind(stmt: SQLiteStatement, params: [string]) -> Result<void, string> {
+    return syscall.sqlite_bind(stmt, params)
+}
+
+pub fn step(stmt: SQLiteStatement) -> Result<bool, string> {
+    return syscall.sqlite_step(stmt)
+}
+
+pub fn reset(stmt: SQLiteStatement) -> Result<void, string> {
+    return syscall.sqlite_reset(stmt)
+}
+
+pub fn finalize(stmt: SQLiteStatement) -> Result<void, string> {
+    return syscall.sqlite_finalize(stmt)
+}
+
+pub fn last_insert_id(db: SQLite) -> Result<int, string> {
+    return syscall.sqlite_last_insert_id(db)
+}
+
+pub fn changes(db: SQLite) -> Result<int, string> {
+    return syscall.sqlite_changes(db)
+}
+
+pub fn begin_transaction(db: SQLite) -> Result<void, string> {
+    return execute(db, "BEGIN TRANSACTION")
+}
+
+pub fn commit(db: SQLite) -> Result<void, string> {
+    return execute(db, "COMMIT")
+}
+
+pub fn rollback(db: SQLite) -> Result<void, string> {
+    return execute(db, "ROLLBACK")
+}

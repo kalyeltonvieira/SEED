@@ -1,0 +1,41 @@
+sort.timsort:
+  description = ordena numeros, strings ou registros usando estrategia adaptativa
+  complexity = O(n log n)
+  tags = ordena sort lista numeros estavel adaptativo
+  tests = saida ordenada; mesmos elementos; repetidos preservados
+  code = fn sort(xs){ stdlib.collections.sort_timsort(xs) }
+
+sort.quicksort:
+  description = ordena numeros por particionamento
+  complexity = O(n log n) average
+  tags = ordena sort lista numeros particionamento
+  tests = saida ordenada; mesmos elementos
+  code = fn sort(xs){ stdlib.collections.sort_quick(xs) }
+
+sort.merge:
+  description = ordena numeros de forma estavel com merge sort
+  complexity = O(n log n)
+  tags = ordena sort lista numeros estavel merge
+  tests = saida ordenada; mesmos elementos; estavel
+  code = fn sort(xs){ stdlib.collections.sort_merge(xs) }
+
+fib.matrix:
+  description = fibonacci exato usando exponenciacao por quadrados
+  complexity = O(log n)
+  tags = fibonacci fib matematica log
+  tests = fib(0)=0; fib(1)=1; fib(10)=55
+  code = fn fib(n){ stdlib.math.fib_matrix(n) }
+
+parser.result:
+  description = parser que retorna Result em vez de falhar silenciosamente
+  complexity = O(n)
+  tags = parser parse json result erro
+  tests = entrada valida retorna ok; entrada invalida retorna err
+  code = fn parse(input){ return parser.run(input) }
+
+query.paginated_cache:
+  description = substitui consulta ampla por cache e paginacao
+  complexity = O(page)
+  tags = sql cache paginacao banco usuarios
+  tests = nao carrega tabela inteira; preserva campos pedidos
+  code = fn buscar(){ cache.get(key).or_else(|| sql_query_paginated(query, page_size=1000)) }

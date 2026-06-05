@@ -1,0 +1,359 @@
+module stdlib.collections
+
+type Array[T] = { ptr: int, len: int, cap: int }
+type List[T] = { ptr: int, len: int, cap: int }
+type Dict[K,V] = { buckets: Array[Array[{ key: K, value: V }]] }
+type Set[T] = { items: Dict[T, bool] }
+
+// List functions
+/// Cria lista vazia
+fn List[T]() -> List[T] {
+    return List[T](alloc(64), 0, 8)
+}
+
+/// Cria de array
+fn from_array[T](arr: [T]) -> List[T] {
+    let list = List[T]()
+    for item in arr { list.push(item) }
+    return list
+}
+
+/// Adiciona ao final
+fn push[T](list: List[T], item: T) {
+    if list.len == list.cap {
+        list = grow(list)
+    }
+    list.ptr[list.len] = item
+    list.len = list.len + 1
+}
+
+/// Remove do final
+fn pop[T](list: List[T]) -> T {
+    list.len = list.len - 1
+    return list.ptr[list.len]
+}
+
+/// Insere na posição
+fn insert[T](list: List[T], index: int, item: T) {
+    if list.len == list.cap {
+        list = grow(list)
+    }
+    for i in list.len..index {
+        list.ptr[i] = list.ptr[i - 1]
+    }
+    list.ptr[index] = item
+    list.len = list.len + 1
+}
+
+/// Remove da posição
+fn remove[T](list: List[T], index: int) -> T {
+    let item = list.ptr[index]
+    for i in index..list.len - 1 {
+        list.ptr[i] = list.ptr[i + 1]
+    }
+    list.len = list.len - 1
+    return item
+}
+
+/// Pega na posição
+fn get[T](list: List[T], index: int) -> Option[T] {
+    if index >= 0 && index < list.len {
+        return Option[T].Some(list.ptr[index])
+    }
+    return Option[T].None
+}
+
+/// Tamanho
+fn len[T](list: List[T]) -> int {
+    return list.len
+}
+
+/// Está vazia?
+fn is_empty[T](list: List[T]) -> bool {
+    return list.len == 0
+}
+
+/// Contém?
+fn contains[T](list: List[T], item: T) -> bool {
+    for i in 0..list.len {
+        if list.ptr[i] == item { return true }
+    }
+    return false
+}
+
+/// Posição do item
+fn index_of[T](list: List[T], item: T) -> Option[int] {
+    for i in 0..list.len {
+        if list.ptr[i] == item { return Option[int].Some(i) }
+    }
+    return Option[int].None
+}
+
+/// Mapeia
+fn map[T,U](list: List[T], f: fn(T) -> U) -> List[U] {
+    let out = List[U]()
+    for i in 0..list.len {
+        out.push(f(list.ptr[i]))
+    }
+    return out
+}
+
+/// Filtra
+fn filter[T](list: List[T], f: fn(T) -> bool) -> List[T] {
+    let out = List[T]()
+    for i in 0..list.len {
+        if f(list.ptr[i]) { out.push(list.ptr[i]) }
+    }
+    return out
+}
+
+/// Reduz
+fn reduce[T](list: List[T], f: fn(T, T) -> T, initial: T) -> T {
+    let acc = initial
+    for i in 0..list.len {
+        acc = f(acc, list.ptr[i])
+    }
+    return acc
+}
+
+/// Ordena
+fn sort[T](list: List[T]) -> List[T] {
+    return sort_timsort(list)
+}
+
+/// Inverte
+fn reverse[T](list: List[T]) -> List[T] {
+    let out = List[T]()
+    for i in list.len..0 {
+        out.push(list.ptr[i - 1])
+    }
+    return out
+}
+
+// Dict functions
+/// Cria dicionário vazio
+fn Dict[K,V]() -> Dict[K,V] {
+    return Dict[K,V](Array[Array[{ key: K, value: V }]]())
+}
+
+/// Insere
+fn set[K,V](dict: Dict[K,V], key: K, value: V) {
+    let hash = hash_key(key)
+    let bucket = dict.buckets[hash % dict.buckets.len]
+    for i in 0..bucket.len {
+        if bucket[i].key == key {
+            bucket[i].value = value
+            return
+        }
+    }
+    bucket.push({ key: key, value: value })
+}
+
+/// Busca
+fn get[K,V](dict: Dict[K,V], key: K) -> Option[V] {
+    let hash = hash_key(key)
+    let bucket = dict.buckets[hash % dict.buckets.len]
+    for i in 0..bucket.len {
+        if bucket[i].key == key {
+            return Option[V].Some(bucket[i].value)
+        }
+    }
+    return Option[V].None
+}
+
+/// Remove
+fn remove[K,V](dict: Dict[K,V], key: K) {
+    let hash = hash_key(key)
+    let bucket = dict.buckets[hash % dict.buckets.len]
+    for i in 0..bucket.len {
+        if bucket[i].key == key {
+            bucket.remove(i)
+            return
+        }
+    }
+}
+
+/// Contém chave?
+fn has[K,V](dict: Dict[K,V], key: K) -> bool {
+    return get(dict, key) != Option[V].None
+}
+
+/// Todas as chaves
+fn keys[K,V](dict: Dict[K,V]) -> [K] {
+    let out = []
+    for bucket in dict.buckets {
+        for entry in bucket {
+            out.push(entry.key)
+        }
+    }
+    return out
+}
+
+/// Todos os valores
+fn values[K,V](dict: Dict[K,V]) -> [V] {
+    let out = []
+    for bucket in dict.buckets {
+        for entry in bucket {
+            out.push(entry.value)
+        }
+    }
+    return out
+}
+
+/// Todos os pares
+fn entries[K,V](dict: Dict[K,V]) -> [(K, V)] {
+    let out = []
+    for bucket in dict.buckets {
+        for entry in bucket {
+            out.push((entry.key, entry.value))
+        }
+    }
+    return out
+}
+
+/// Número de entradas
+fn len[K,V](dict: Dict[K,V]) -> int {
+    let count = 0
+    for bucket in dict.buckets {
+        count = count + bucket.len
+    }
+    return count
+}
+
+// Set functions
+/// Cria conjunto vazio
+fn Set[T]() -> Set[T] {
+    return Set[T](Dict[T, bool]())
+}
+
+/// Adiciona
+fn add[T](set: Set[T], item: T) {
+    set.items[item] = true
+}
+
+/// Remove
+fn remove[T](set: Set[T], item: T) {
+    set.items.remove(item)
+}
+
+/// Contém?
+fn contains[T](set: Set[T], item: T) -> bool {
+    return set.items.has(item)
+}
+
+/// União
+fn union[T](a: Set[T], b: Set[T]) -> Set[T] {
+    let out = Set[T]()
+    for item in a.items.keys() { out.add(item) }
+    for item in b.items.keys() { out.add(item) }
+    return out
+}
+
+/// Interseção
+fn intersection[T](a: Set[T], b: Set[T]) -> Set[T] {
+    let out = Set[T]()
+    for item in a.items.keys() {
+        if b.contains(item) { out.add(item) }
+    }
+    return out
+}
+
+/// Diferença
+fn difference[T](a: Set[T], b: Set[T]) -> Set[T] {
+    let out = Set[T]()
+    for item in a.items.keys() {
+        if !b.contains(item) { out.add(item) }
+    }
+    return out
+}
+
+/// Tamanho
+fn len[T](set: Set[T]) -> int {
+    return set.items.len()
+}
+
+// Legacy Array functions for compatibility
+fn Array[T]() -> Array[T] {
+    return Array[T](alloc(64), 0, 8)
+}
+
+fn unique[T](self: Array[T]) -> Array[T] {
+    let out = Array[T]()
+    for item in self {
+        if !out.contains(item) { out.push(item) }
+    }
+    return out
+}
+
+fn sort_by[T](self: Array[T], key_fn) -> Array[T] {
+    return insertion_sort(self, key_fn)
+}
+
+fn insertion_sort[T](items: Array[T], key_fn) -> Array[T] {
+    let out = items.copy()
+    for i in 1..out.len {
+        let value = out[i]
+        let j = i - 1
+        while j >= 0 && key_fn(out[j]) > key_fn(value) {
+            out[j + 1] = out[j]
+            j = j - 1
+        }
+        out[j + 1] = value
+    }
+    return out
+}
+
+fn sort_timsort[T](items: Array[T]) -> Array[T] {
+    if items.len < 32 { return insertion_sort(items, x => x) }
+    return sort_merge(items)
+}
+
+fn sort_merge[T](items: Array[T]) -> Array[T] {
+    if items.len <= 1 { return items }
+    let mid = items.len / 2
+    let left = sort_merge(items.slice(0, mid))
+    let right = sort_merge(items.slice(mid, items.len))
+    return merge_sorted(left, right)
+}
+
+fn merge_sorted[T](left: Array[T], right: Array[T]) -> Array[T] {
+    let out = Array[T]()
+    let i = 0
+    let j = 0
+    while i < left.len || j < right.len {
+        if j >= right.len || (i < left.len && left[i] <= right[j]) {
+            out.push(left[i])
+            i = i + 1
+        } else {
+            out.push(right[j])
+            j = j + 1
+        }
+    }
+    return out
+}
+
+fn sort_quick[T](items: Array[T]) -> Array[T] {
+    if items.len <= 1 { return items }
+    let pivot = items[0]
+    let lower = Array[T]()
+    let greater = Array[T]()
+    for item in items.slice(1, items.len) {
+        if item <= pivot { lower.push(item) } else { greater.push(item) }
+    }
+    return sort_quick(lower) + [pivot] + sort_quick(greater)
+}
+
+fn is_sorted[T](items: Array[T]) -> bool {
+    for i in 1..items.len {
+        if items[i - 1] > items[i] { return false }
+    }
+    return true
+}
+
+fn multiset[T](items: Array[T]) -> Dict[T,int] {
+    let counts = Dict[T,int]()
+    for item in items {
+        counts[item] = counts.get(item, 0) + 1
+    }
+    return counts
+}

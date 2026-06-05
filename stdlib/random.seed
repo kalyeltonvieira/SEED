@@ -1,0 +1,78 @@
+module stdlib.random
+
+/// Random number generation module
+/// Uses a pure Xorshift64 implementation for reproducibility
+
+let state: int = 88172645463325252
+
+pub fn seed(s: int) {
+    if s == 0 {
+        state = 88172645463325252
+    } else {
+        state = s
+    }
+}
+
+pub fn random() -> float {
+    // Xorshift64 PRNG iteration
+    state = state ^ (state << 13)
+    state = state ^ (state >> 7)
+    state = state ^ (state << 17)
+    
+    // Normalization to [0.0, 1.0)
+    let val = if state < 0 { -state } else { state }
+    let float_val = (val % 100000000).to_float() / 100000000.0
+    return float_val
+}
+
+pub fn range(min_val: int, max_val: int) -> int {
+    if min_val >= max_val { return min_val }
+    let r = max_val - min_val + 1
+    let rand_val = (random() * r.to_float()).to_int()
+    return min_val + rand_val
+}
+
+pub fn range_float(min_val: float, max_val: float) -> float {
+    if min_val >= max_val { return min_val }
+    return min_val + random() * (max_val - min_val)
+}
+
+pub fn choice(items: [T]) -> T {
+    let idx = range(0, items.len - 1)
+    return items[idx]
+}
+
+pub fn shuffle(items: &mut [T]) {
+    for i in items.len..1 step -1 {
+        let j = range(0, i - 1)
+        let temp = items[i - 1]
+        items[i - 1] = items[j]
+        items[j] = temp
+    }
+}
+
+pub fn sample(items: [T], n: int) -> [T] {
+    if n <= 0 { return [] }
+    let result = []
+    let temp = items.copy()
+    shuffle(&mut temp)
+    
+    let limit = if n < temp.len { n } else { temp.len }
+    for i in 0..limit {
+        result.push(temp[i])
+    }
+    return result
+}
+
+pub fn bool() -> bool {
+    return range(0, 1) == 1
+}
+
+pub fn bytes(n: int) -> string {
+    let result = ""
+    for i in 0..n {
+        let b = range(0, 255)
+        result = result + b.to_char()
+    }
+    return result
+}

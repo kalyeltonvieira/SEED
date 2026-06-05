@@ -1,0 +1,176 @@
+module stdlib.iterator
+
+/// Iterator module for traversing collections
+
+pub type Iterator<T> = {
+    next: fn() -> Option<T>
+}
+
+pub fn iterator<T>(next: fn() -> Option<T>) -> Iterator<T> {
+    return Iterator { next: next }
+}
+
+pub fn next<T>(it: Iterator<T>) -> Option<T> {
+    return it.next()
+}
+
+pub fn map<T, U>(it: Iterator<T>, f: fn(T) -> U) -> Iterator<U> {
+    return iterator(|| {
+        let item = it.next()
+        if item.is_some {
+            return Option<U>.Some(f(item.unwrap()))
+        }
+        return Option<U>.None
+    })
+}
+
+pub fn filter<T>(it: Iterator<T>, f: fn(T) -> bool) -> Iterator<T> {
+    return iterator(|| {
+        while true {
+            let item = it.next()
+            if item.is_none { return Option<T>.None }
+            if f(item.unwrap()) { return item }
+        }
+    })
+}
+
+pub fn collect<T>(it: Iterator<T>) -> [T] {
+    let result = []
+    while true {
+        let item = it.next()
+        if item.is_none { break }
+        result.push(item.unwrap())
+    }
+    return result
+}
+
+pub fn count<T>(it: Iterator<T>) -> int {
+    let count = 0
+    while true {
+        let item = it.next()
+        if item.is_none { break }
+        count = count + 1
+    }
+    return count
+}
+
+pub fn for_each<T>(it: Iterator<T>, f: fn(T)) {
+    while true {
+        let item = it.next()
+        if item.is_none { break }
+        f(item.unwrap())
+    }
+}
+
+pub fn take<T>(it: Iterator<T>, n: int) -> Iterator<T> {
+    let remaining = n
+    return iterator(|| {
+        if remaining <= 0 { return Option<T>.None }
+        remaining = remaining - 1
+        return it.next()
+    })
+}
+
+pub fn skip<T>(it: Iterator<T>, n: int) -> Iterator<T> {
+    let skipped = 0
+    return iterator(|| {
+        while skipped < n {
+            let item = it.next()
+            if item.is_none { return Option<T>.None }
+            skipped = skipped + 1
+        }
+        return it.next()
+    })
+}
+
+pub fn from_array<T>(arr: [T]) -> Iterator<T> {
+    let index = 0
+    return iterator(|| {
+        if index >= arr.len { return Option<T>.None }
+        let result = arr[index]
+        index = index + 1
+        return Option<T>.Some(result)
+    })
+}
+
+pub fn from_range(start: int, end: int) -> Iterator<int> {
+    let current = start
+    return iterator(|| {
+        if current >= end { return Option<int>.None }
+        let result = current
+        current = current + 1
+        return Option<int>.Some(result)
+    })
+}
+
+pub fn from_string(s: string) -> Iterator<char> {
+    let index = 0
+    return iterator(|| {
+        if index >= s.len { return Option<char>.None }
+        let result = s[index]
+        index = index + 1
+        return Option<char>.Some(result)
+    })
+}
+
+pub fn cycle<T>(it: Iterator<T>) -> Iterator<T> {
+    let buffer = []
+    let index = 0
+    return iterator(|| {
+        if buffer.len == 0 {
+            while true {
+                let item = it.next()
+                if item.is_none { break }
+                buffer.push(item.unwrap())
+            }
+        }
+        if buffer.len == 0 { return Option<T>.None }
+        let result = buffer[index]
+        index = (index + 1) % buffer.len
+        return Option<T>.Some(result)
+    })
+}
+
+pub fn zip<T, U>(it1: Iterator<T>, it2: Iterator<U>) -> Iterator<(T, U)> {
+    return iterator(|| {
+        let item1 = it1.next()
+        let item2 = it2.next()
+        if item1.is_none || item2.is_none { return Option<(T, U)>.None }
+        return Option<(T, U)>.Some((item1.unwrap(), item2.unwrap()))
+    })
+}
+
+pub fn enumerate<T>(it: Iterator<T>) -> Iterator<(int, T)> {
+    let index = 0
+    return iterator(|| {
+        let item = it.next()
+        if item.is_none { return Option<(int, T)>.None }
+        let result = (index, item.unwrap())
+        index = index + 1
+        return Option<(int, T)>.Some(result)
+    })
+}
+
+pub fn find<T>(it: Iterator<T>, f: fn(T) -> bool) -> Option<T> {
+    while true {
+        let item = it.next()
+        if item.is_none { return Option<T>.None }
+        if f(item.unwrap()) { return item }
+    }
+}
+
+pub fn any<T>(it: Iterator<T>, f: fn(T) -> bool) -> bool {
+    while true {
+        let item = it.next()
+        if item.is_none { return false }
+        if f(item.unwrap()) { return true }
+    }
+}
+
+pub fn all<T>(it: Iterator<T>, f: fn(T) -> bool) -> bool {
+    while true {
+        let item = it.next()
+        if item.is_none { return true }
+        if !f(item.unwrap()) { return false }
+    }
+}

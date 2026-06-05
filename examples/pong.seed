@@ -1,0 +1,139 @@
+module examples.pong
+
+import stdlib.io
+import stdlib.time
+import stdlib.ansi
+import stdlib.geometry
+
+const WIDTH = 50
+const HEIGHT = 15
+
+type Ball = {
+    pos: geometry.Vector2,
+    vel: geometry.Vector2
+}
+
+type Paddle = {
+    pos: geometry.Vector2,
+    size: float
+}
+
+fn main() {
+    ansi.clear_screen()
+    io.println(ansi.style("=== SEED 2D PONG ===", ansi.BOLD + ansi.CYAN))
+    io.println("Controles: Os paddles movem-se autonomamente (IA vs IA)")
+    io.println("Pressione Enter para começar...")
+    io.read_line()
+    
+    let mut ball = Ball {
+        pos: geometry.vec2(25.0, 7.0),
+        vel: geometry.vec2(1.0, 0.5)
+    }
+    
+    let mut paddle1 = Paddle {
+        pos: geometry.vec2(2.0, 6.0),
+        size: 3.0
+    }
+    
+    let mut paddle2 = Paddle {
+        pos: geometry.vec2(47.0, 6.0),
+        size: 3.0
+    }
+    
+    let mut score1 = 0
+    let mut score2 = 0
+    let mut running = true
+    
+    while running {
+        // Render screen
+        let mut render_str = ansi.clear_screen()
+        
+        // Render top border
+        render_str = render_str + "+" + "-" * WIDTH + "+\n"
+        
+        for y in 0..HEIGHT {
+            let mut row = "|"
+            for x in 0..WIDTH {
+                let current_pos = geometry.vec2(x.to_float(), y.to_float())
+                
+                // Ball
+                if geometry.vec2_distance(current_pos, ball.pos) < 0.8 {
+                    row = row + ansi.style("O", ansi.BOLD + ansi.YELLOW)
+                }
+                // Paddle 1
+                else if current_pos.x == paddle1.pos.x && current_pos.y >= paddle1.pos.y && current_pos.y < paddle1.pos.y + paddle1.size {
+                    row = row + ansi.style("#", ansi.BOLD + ansi.GREEN)
+                }
+                // Paddle 2
+                else if current_pos.x == paddle2.pos.x && current_pos.y >= paddle2.pos.y && current_pos.y < paddle2.pos.y + paddle2.size {
+                    row = row + ansi.style("#", ansi.BOLD + ansi.CYAN)
+                }
+                // Empty space
+                else {
+                    row = row + " "
+                }
+            }
+            render_str = render_str + row + "|\n"
+        }
+        
+        // Render bottom border
+        render_str = render_str + "+" + "-" * WIDTH + "+\n"
+        render_str = render_str + "Placar: " + ansi.style(score1.to_string(), ansi.GREEN) + " x " + ansi.style(score2.to_string(), ansi.CYAN) + "\n"
+        
+        io.print(render_str)
+        
+        // Physics / Movement
+        ball.pos = geometry.vec2_add(ball.pos, ball.vel)
+        
+        // Wall Bounce (Top/Bottom)
+        if ball.pos.y <= 0.0 || ball.pos.y >= HEIGHT.to_float() - 1.0 {
+            ball.vel.y = -ball.vel.y
+        }
+        
+        // Paddle Bounce Left
+        if ball.pos.x <= paddle1.pos.x + 1.0 && ball.pos.x >= paddle1.pos.x {
+            if ball.pos.y >= paddle1.pos.y && ball.pos.y <= paddle1.pos.y + paddle1.size {
+                ball.vel.x = -ball.vel.x
+                ball.vel.y = ball.vel.y + (ball.pos.y - (paddle1.pos.y + 1.5)) * 0.2
+            }
+        }
+        
+        // Paddle Bounce Right
+        if ball.pos.x >= paddle2.pos.x - 1.0 && ball.pos.x <= paddle2.pos.x {
+            if ball.pos.y >= paddle2.pos.y && ball.pos.y <= paddle2.pos.y + paddle2.size {
+                ball.vel.x = -ball.vel.x
+                ball.vel.y = ball.vel.y + (ball.pos.y - (paddle2.pos.y + 1.5)) * 0.2
+            }
+        }
+        
+        // Score logic
+        if ball.pos.x <= 0.0 {
+            score2 = score2 + 1
+            ball.pos = geometry.vec2(25.0, 7.0)
+            ball.vel = geometry.vec2(1.0, 0.5)
+        }
+        if ball.pos.x >= WIDTH.to_float() {
+            score1 = score1 + 1
+            ball.pos = geometry.vec2(25.0, 7.0)
+            ball.vel = geometry.vec2(-1.0, -0.5)
+        }
+        
+        // AI for Paddle 1
+        if paddle1.pos.y + 1.5 < ball.pos.y && paddle1.pos.y < HEIGHT.to_float() - paddle1.size {
+            paddle1.pos.y = paddle1.pos.y + 0.5
+        }
+        if paddle1.pos.y + 1.5 > ball.pos.y && paddle1.pos.y > 0.0 {
+            paddle1.pos.y = paddle1.pos.y - 0.5
+        }
+        
+        // AI for Paddle 2
+        if paddle2.pos.y + 1.5 < ball.pos.y && paddle2.pos.y < HEIGHT.to_float() - paddle2.size {
+            paddle2.pos.y = paddle2.pos.y + 0.5
+        }
+        if paddle2.pos.y + 1.5 > ball.pos.y && paddle2.pos.y > 0.0 {
+            paddle2.pos.y = paddle2.pos.y - 0.5
+        }
+        
+        time.sleep(50)
+    }
+}

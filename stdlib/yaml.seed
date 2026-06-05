@@ -1,0 +1,41 @@
+module stdlib.yaml
+
+/// YAML serialization module
+
+pub type YamlValue = {
+    // Can be string, int, float, bool, array, or map
+}
+
+pub fn parse(s: string) -> Result<YamlValue, string> {
+    return syscall.yaml_parse(s)
+}
+
+pub fn stringify(v: YamlValue) -> Result<string, string> {
+    return syscall.yaml_stringify(v)
+}
+
+pub fn stringify_pretty(v: YamlValue) -> Result<string, string> {
+    return syscall.yaml_stringify_pretty(v)
+}
+
+pub fn load_file(path: string) -> Result<YamlValue, string> {
+    let content = io.read_file(path)
+    return parse(content)
+}
+
+pub fn save_file(path: string, v: YamlValue) -> Result<void, string> {
+    let result = stringify(v)
+    if result.is_error {
+        return Result.error(result.error)
+    }
+    io.write_file(path, result.value)
+    return Result.ok(())
+}
+
+pub fn to_json(v: YamlValue) -> Result<JsonValue, string> {
+    return syscall.yaml_to_json(v)
+}
+
+pub fn from_json(v: JsonValue) -> Result<YamlValue, string> {
+    return syscall.yaml_from_json(v)
+}
