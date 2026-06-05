@@ -1,40 +1,40 @@
 module tests.seed_selftest
 
 test "hello-world-approved" {
-    let p = seed1.compile("fn main(){ print(\"Hello World\") }")
+    let p = seed1.compile("fn main() { print(\"Hello World\") }")
     assert(p.diagnostics.any(d => d.code == "SEED000"))
 }
 
 test "naive-fibonacci-warned" {
-    let p = seed1.compile("fn fib(n){ if n<=1{n}else{fib(n-1)+fib(n-2)} }")
+    let p = seed1.compile("fn fib(n) { if n<=1 {n}else {fib(n-1)+fib(n-2)} }")
     assert(p.diagnostics.any(d => d.code == "SEED002"))
     assert(p.rewrites.any(r => r.name == "fib-naive-to-matrix"))
 }
 
 test "bubble-sort-needs-negotiation" {
     let src = "
-        fn ordenar(lista) {
-            for i in 0..len(lista) {
-                for j in 0..len(lista)-1 {
-                    if lista[j] > lista[j+1] { trocar(lista, j, j+1) }
-                }
+    fn ordenar(lista) {
+        for i in 0..len(lista) {
+            for j in 0..len(lista)-1 {
+                if lista[j] > lista[j+1] { trocar(lista, j, j+1) }
             }
-            lista
-        }
-    "
-    let p = seed1.compile(src)
-    assert(p.diagnostics.any(d => d.code == "SEED001"))
-    assert(p.rewrites.any(r => r.name == "bubble-sort-to-timsort"))
+    }
+lista
+}
+"
+let p = seed1.compile(src)
+assert(p.diagnostics.any(d => d.code == "SEED001"))
+assert(p.rewrites.any(r => r.name == "bubble-sort-to-timsort"))
 }
 
 test "keep-compiles-original" {
-    let src = "#[keep] fn ordenar(lista){ for i in 0..len(lista){ for j in 0..len(lista)-1{ if lista[j] > lista[j+1]{ swap(lista,j,j+1) } } } lista }"
+    let src = "#[keep] fn ordenar(lista) { for i in 0..len(lista) { for j in 0..len(lista)-1 { if lista[j] > lista[j+1]{ swap(lista,j,j+1) } } } lista }"
     let p = seed1.compile(src)
     assert(p.diagnostics.any(d => d.message.contains("preservado")))
 }
 
 test "select-star-expires" {
-    let p = seed1.compile("fn buscar(){ sql_query(\"SELECT * FROM usuarios\") }")
+    let p = seed1.compile("fn buscar() { sql_query(\"SELECT * FROM usuarios\") }")
     assert(p.diagnostics.any(d => d.code == "SEED003"))
     assert(p.rewrites.any(r => r.name == "select-star-to-paged-cache"))
 }
@@ -69,8 +69,8 @@ test "genitor-produces-search-plan" {
 }
 
 test "effects-cannot-grow-silently" {
-    let before = seed0.compile("fn a(){ return 1 }")
-    let after = seed0.compile("fn a(){ net.post(\"x\", \"y\") }")
+    let before = seed0.compile("fn a() { return 1 }")
+    let after = seed0.compile("fn a() { net.post(\"x\", \"y\") }")
     assert(seed1.effect_audit(before, after) == false)
 }
 

@@ -403,13 +403,21 @@ class Transpiler {
         declare_variable("seed1", "CompilerObj", 0);
         declare_variable("synthesizer", "SynthesizerObj", 0);
         declare_variable("license", "LicenseObj", 0);
-
+        declare_variable("prompt", "string", 0);
+        // Register split and to_float helpers
+        declare_variable("split", "any", 0);
+        declare_variable("to_float", "float", 0);
+        
         declared_functions["print"] = {"void", {"any"}};
         declared_functions["println"] = {"void", {"any"}};
         declared_functions["to_string"] = {"string", {"any"}};
         declared_functions["trim"] = {"string", {"string"}};
         declared_functions["len"] = {"int", {"any"}};
         declared_functions["assert"] = {"void", {"bool"}};
+        declared_functions["prompt"] = {"string", {"string"}};
+        // Register builtins for split and to_float
+        declared_functions["split"] = {"any", {"string", "string"}};
+        declared_functions["to_float"] = {"float", {"string"}};
     }
 
     bool is_integer_type(const string& t) {
@@ -1235,6 +1243,18 @@ class Transpiler {
                 // Convert .push() to .push_back()
                 text = "push_back";
             }
+            else if (text == "split") {
+                // Convert .split(delim) to seed::split(obj, delim)
+                if (!expr.empty() && expr.back() == ' ') expr.pop_back();
+                if (!expr.empty() && expr.back() == '.') expr.pop_back();
+                text = "seed::split";
+            }
+            else if (text == "to_float") {
+                // Convert .to_float() to seed::to_float(obj)
+                if (!expr.empty() && expr.back() == ' ') expr.pop_back();
+                if (!expr.empty() && expr.back() == '.') expr.pop_back();
+                text = "seed::to_float";
+            }
             else if (text == "dict") {
                 // Handle dict() function calls
                 if (peek().type == SeedToken::LParen) {
@@ -1355,79 +1375,47 @@ class Transpiler {
     }
 
     string parse_match_statement() {
-        Token start_t = peek();
-        advance(); // match
-        string value = parse_expr(SeedToken::LBrace);
+        // Parse selector expression
+        advance(); // consume 'match'
+        string selector = parse_expr(SeedToken::LBrace);
+        // Expect opening brace for arms
         if (peek().type == SeedToken::LBrace) advance();
-
-        string tmp = "__seed_match_" + to_string(temp_counter++);
-        string cpp = "{\nauto " + tmp + " = " + trim_copy(value) + ";\n";
-        bool emitted_branch = false;
-
-        while (peek().type != SeedToken::Eof && peek().type != SeedToken::RBrace) {
+        vector<pair<string,string>> arms; // variant, expr
+        // Parse each arm until closing brace
+        while (peek().type != SeedToken::RBrace && peek().type != SeedToken::Eof) {
+            // variant string literal
             string variant = advance().text;
-            string binding;
-
+            // optional binding (ignored for simple match)
             if (peek().type == SeedToken::LParen) {
-                advance();
-                if (peek().type != SeedToken::RParen) {
-                    binding = advance().text;
-                    while (peek().type != SeedToken::RParen && peek().type != SeedToken::Eof) advance();
-                }
+                // skip binding syntax
+                advance(); // '('
+                while (peek().type != SeedToken::RParen && peek().type != SeedToken::Eof) advance();
                 if (peek().type == SeedToken::RParen) advance();
             }
-
             consume_fat_arrow();
-
-            string body;
-            if (peek().type == SeedToken::LBrace) {
-                push_scope();
-                if (!binding.empty() && binding != "_") {
-                    declare_variable(binding, "any", start_t.line);
-                }
-                body = parse_block();
-                pop_scope();
-            } else {
-                push_scope();
-                if (!binding.empty() && binding != "_") {
-                    declare_variable(binding, "any", start_t.line);
-                }
-                string arm_expr = parse_expr(SeedToken::Comma, SeedToken::RBrace);
-                body = "{\n" + arm_expr + ";\n}";
-                pop_scope();
-            }
-
+            // expression for this arm
+            string arm_expr = parse_expr(SeedToken::Comma, SeedToken::RBrace);
+            arms.emplace_back(variant, arm_expr);
             if (peek().type == SeedToken::Comma || peek().type == SeedToken::Semicolon) advance();
-
-            bool success_variant = variant == "Ok" || variant == "Some";
-            bool failure_variant = variant == "Err" || variant == "None";
-            string prefix;
-
-            if (success_variant) {
-                prefix = emitted_branch ? "else if (" + tmp + ") " : "if (" + tmp + ") ";
-                emitted_branch = true;
-            } else if (failure_variant) {
-                prefix = emitted_branch ? "else " : "if (!" + tmp + ") ";
-                emitted_branch = true;
-            } else {
-                prefix = emitted_branch ? "else " : "";
-                emitted_branch = true;
-            }
-
-            cpp += prefix + "{\n";
-            if (!binding.empty() && binding != "_") {
-                if (success_variant) {
-                    cpp += "auto " + binding + " = *" + tmp + ";\n";
-                } else if (variant == "Err") {
-                    cpp += "auto " + binding + " = " + tmp + ".error();\n";
-                }
-            }
-            cpp += body + "\n";
-            cpp += "}\n";
         }
-
+        // Consume closing brace
         if (peek().type == SeedToken::RBrace) advance();
-        cpp += "}";
+        // Build lambda expression
+        string cpp = "([&](){\n";
+        for (size_t i = 0; i < arms.size(); ++i) {
+            const auto& [var, expr] = arms[i];
+            if (i == 0) cpp += "if (" + selector + " == " + var + ") ";
+            else cpp += "else if (" + selector + " == " + var + ") ";
+            cpp += "return " + expr + ";\n";
+        }
+        // default case – return last expression if provided, else zero
+        if (!arms.empty()) {
+            const auto& [lastVar, lastExpr] = arms.back();
+            cpp += "else return " + lastExpr + ";\n";
+        } else {
+            cpp += "return 0;\n";
+        }
+        cpp += "})()";
         return cpp;
     }
 

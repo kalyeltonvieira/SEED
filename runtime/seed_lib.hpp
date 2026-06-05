@@ -38,6 +38,32 @@ inline std::string read_line() {
     }
     return "";
 }
+// Simple prompt helper used by many examples
+inline std::string prompt(const std::string& msg) {
+    print(msg);
+    return read_line();
+}
+
+// Split a string by delimiter, returning a vector of substrings
+inline std::vector<std::string> split(const std::string& s, const std::string& delim) {
+    std::vector<std::string> out;
+    size_t start = 0, end;
+    while ((end = s.find(delim, start)) != std::string::npos) {
+        out.emplace_back(s.substr(start, end - start));
+        start = end + delim.length();
+    }
+    out.emplace_back(s.substr(start));
+    return out;
+}
+
+// Convert string to floating point (double)
+inline double to_float(const std::string& s) {
+    try {
+        return std::stod(s);
+    } catch (...) {
+        return 0.0; // fallback on error
+    }
+}
 
 // TRIM
 inline std::string trim(const std::string& str) {
@@ -221,6 +247,24 @@ struct SynthesizerObj {
             r.intent.name = "sort";
             r.selected.tests.push_back("lista ordenada");
         }
+        else if (text == "push") {
+                // Convert .push() to .push_back()
+                text = "push_back";
+            }
+            else if (text == "split") {
+                // Convert .split(delim) to seed::split(obj, delim)
+                // Remove trailing dot from expr
+                if (!expr.empty() && expr.back() == ' ') expr.pop_back();
+                if (!expr.empty() && expr.back() == '.') expr.pop_back();
+                text = "seed::split";
+            }
+            else if (text == "to_float") {
+                // Convert .to_float() to seed::to_float(obj)
+                if (!expr.empty() && expr.back() == ' ') expr.pop_back();
+                if (!expr.empty() && expr.back() == '.') expr.pop_back();
+                text = "seed::to_float";
+            }
+            else if (text == "dict") {   }
         return r;
     }
 };
