@@ -1,0 +1,236 @@
+// RELATÓRIO DE BUGS ENCONTRADOS NA COMPILAÇÃO SEED 0.3
+// Data: 2026-06-05
+// Severity: CRÍTICA
+
+module bug_report
+
+import stdlib.io
+
+/*
+═══════════════════════════════════════════════════════════════════════════════
+                           BUGS ENCONTRADOS
+═══════════════════════════════════════════════════════════════════════════════
+*/
+
+// BUG #1: Match com tipos mistos (CRÍTICO)
+// Arquivo: seed_compiler_codegen.cpp, linha 168-180
+// Problema: Match traduzido para lambda anônima em vez de instrução switch
+// Sintoma: "match" não preserva tipos, gera C++ inválido
+data Bug1 {
+    Descricao(String)
+    Linha(Int)
+    Severidade(String)
+    Solucao(String)
+}
+
+fn bug1() -> Bug1 {
+    return Bug1 {
+        Descricao: "Parse de match simplesmente cria lambda vazia",
+        Linha: 179,
+        Severidade: "CRÍTICA",
+        Solucao: "Implementar gerador de switch statement com type checking"
+    }
+}
+
+/*
+parse_expr() traduz:
+    match op {
+        "+" => a + b
+        ...
+    }
+
+Para:
+    [&](){ /* match */ return op; }()
+
+❌ ERRADO: perde os cases e a lógica
+✓ CORRETO: gerar switch(op) com cases tipados
+*/
+
+// BUG #2: Type inference incompleta em expressões
+// Arquivo: seed_compiler_codegen.cpp, linha 133-212
+// Problema: parse_expr não trackeia tipos, gera type mismatch
+// Sintoma: "match op { "+" => a + b, "/" => "Erro: divisão por zero" }"
+//          Float misturado com String
+
+fn bug2_explanation() effect io {
+    io.println("BUG #2: Type Mismatch em Match")
+    io.println("Linhas 31-37 em calculadora:")
+    io.println("let result = match op {")
+    io.println("    \"+\" => a + b              // Float")
+    io.println("    \"/\" => if ... else a / b  // Float OU String!")
+    io.println("    _ => \"Erro: ...\"          // String")
+    io.println("}")
+    io.println("")
+    io.println("Parser não valida que TODAS as branches retornam o mesmo tipo!")
+}
+
+// BUG #3: Falta de suporte a loop
+// Arquivo: seed_compiler_codegen.cpp
+// Problema: Não há handler para token 'loop'
+// Sintoma: "loop { ... }" não compila
+
+fn bug3() {
+    // parse_statement() NÃO tratata 'loop'
+    // Solução necessária:
+    // if (t.text == "loop") {
+    //     string block = parse_block()
+    //     return "while (true) " + block
+    // }
+}
+
+// BUG #4: prompt() não está na stdlib
+// Arquivo: seed_lib.hpp
+// Problema: Função não implementada
+// Sintoma: "Semantic Warning: Use of undeclared identifier 'prompt'"
+
+fn bug4_solutions() effect io {
+    io.println("BUG #4: prompt() não implementada")
+    io.println("")
+    io.println("Opção 1: Adicionar a seed_lib.hpp")
+    io.println("inline std::string prompt(const std::string& msg) {")
+    io.println("    std::cout << msg;")
+    io.println("    std::string line;")
+    io.println("    std::getline(std::cin, line);")
+    io.println("    return line;")
+    io.println("}")
+    io.println("")
+}
+
+// BUG #5: read_line() não namespaced
+// Arquivo: seed_runtime.cpp
+// Problema: Transpiler gera "read_line()" em vez de "seed::read_line()"
+// Sintoma: "error: use of undeclared identifier 'read_line'"
+
+fn bug5() {
+    // Linha 465 do erro:
+    // return read_line ( ) ;
+    //        ^~~~~~~~~
+    // Deveria ser:
+    // return seed::read_line ( ) ;
+}
+
+// BUG #6: Geração de C++ com spaces/formatting quebrados
+// Arquivo: seed_compiler_codegen.cpp, linha 209
+// Problema: parse_expr adiciona " " após cada token, gerando:
+//           "a + b" vira "a + b " (espaço extra)
+//           Em "match X" vira "X )" (espaço quebra sintaxe)
+
+fn bug6_example() {
+    // Entrada SEED:
+    // match op { "+" => a + b }
+    
+    // Saída C++ (QUEBRADA):
+    // [&](){ /* match */ return op ; }()
+    //                             ^-- espaço aqui quebra!
+    
+    // Deveria ser:
+    // [&](){ /* match */ return op; }()
+}
+
+// BUG #7: String methods não mapeadas
+// Arquivo: seed_compiler_codegen.cpp, linha 93-107 (map_type)
+// Problema: Métodos como .split(), .to_float(), .to_string() não existem
+// Sintoma: "error: use of undeclared identifier 'to_float'"
+
+fn bug7() effect io {
+    io.println("BUG #7: String methods missing")
+    io.println(".to_float() -> precisa strtof()")
+    io.println(".to_string() -> precisa std::to_string()")
+    io.println(".split() -> precisa implementação custom")
+}
+
+// BUG #8: clang++ path hardcoded
+// Arquivo: seed_compiler_codegen.cpp, linha 480
+// Problema: Assume clang++ existe e está no PATH
+// Sintoma: "clang++ not found" em sistemas sem clang instalado
+
+fn bug8() effect io {
+    io.println("BUG #8: Compilador C++ hardcoded")
+    io.println("Linha 480:")
+    io.println("string cmd = \"clang++ -std=c++20 -O2 ...\";")
+    io.println("Solução: detectar MSVC/clang/gcc e adaptar flags")
+}
+
+// BUG #9: Lexer não incluído
+// Arquivo: seed_compiler_codegen.cpp, linha 12
+// Problema: Comentário "Lexer inserido no arquivo final via script ou merge"
+// Sintoma: Lexer class não definida, compilation fails
+
+fn bug9() effect io {
+    io.println("BUG #9: Lexer não linkado")
+    io.println("Linha 12 comenta: '// (Lexer inserido no arquivo final via script ou merge)'")
+    io.println("")
+    io.println("Mas seed_compiler.cpp não inclui o Lexer!")
+    io.println("Falta:")
+    io.println("#include \"seed_lexer.cpp\" ou")
+    io.println("class Lexer { ... } definição inline")
+}
+
+// BUG #10: ADT (data) não suportado
+// Arquivo: seed_compiler_codegen.cpp, linha 304-319
+// Problema: "type" e "struct" são mapeados para C++ struct
+//           Mas ADTs como "data Result { Ok(T), Err(E) }" não geram tagged unions
+// Sintoma: ADT compila como struct normal, perde type safety
+
+fn bug10() effect io {
+    io.println("BUG #10: ADTs (data) geram struct inválido")
+    io.println("")
+    io.println("SEED:")
+    io.println("data Result[T,E] {")
+    io.println("    Ok(T)")
+    io.println("    Err(E)")
+    io.println("}")
+    io.println("")
+    io.println("C++ GERADO (ERRADO):")
+    io.println("struct Result {")
+    io.println("    // fields perdidas!")
+    io.println("}")
+    io.println("")
+    io.println("DEVERIA ser std::variant ou discriminated union")
+}
+
+// BUG #11: Effect system não checado
+// Arquivo: seed1.seed, linha 162-170 (effect_audit)
+// Problema: effect_audit checa se efeitos DIMINUEM, mas não valida na compilação
+// Sintoma: Código que adiciona `net.` sem effect compila mesmo assim
+
+// BUG #12: Propagation operator (?) não traduzido
+// Arquivo: seed_compiler_codegen.cpp
+// Problema: Nenhuma tratamento para operador "?"
+// Sintoma: "let x = fallible()?" não compila
+
+fn bug12() effect io {
+    io.println("BUG #12: Operador ? (error propagation) não suportado")
+    io.println("")
+    io.println("SEED: let rows = sql_query(...)?")
+    io.println("Deveria traduzir para:")
+    io.println("auto __try_result = sql_query(...);")
+    io.println("if (!__try_result.has_value()) return __try_result.error();")
+    io.println("auto rows = __try_result.value();")
+}
+
+fn main() effect io -> Result[Unit, String] {
+    io.println("╔═══════════════════════════════════════════════════════════════╗")
+    io.println("║           ANÁLISE DE BUGS - SEED COMPILER 0.3               ║")
+    io.println("╚═══════════════════════════════════════════════════════════════╝")
+    io.println("")
+    
+    io.println("BUGS CRÍTICOS: 7")
+    io.println("BUGS IMPORTANTES: 3")
+    io.println("BUGS MENORES: 2")
+    io.println("")
+    
+    io.println("Top 3 Prioritários:")
+    io.println("1. Match generation (gera lambda vazia)")
+    io.println("2. Type checking em match branches")
+    io.println("3. ADT code generation (usa struct instead of variant)")
+    io.println("")
+    
+    io.println("Impacto:")
+    io.println("- Todos os exemplos com match falham")
+    io.println("- Type safety completamente perdida")
+    io.println("- Loop não funciona")
+    io.println("- I/O interativa impossível")
+    
+    return Ok(Unit)
+}
