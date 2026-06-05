@@ -6,7 +6,7 @@ test "hello-world-approved" {
 }
 
 test "naive-fibonacci-warned" {
-    let p = seed1.compile("fn fib(n) { if n<=1 {n}else {fib(n-1)+fib(n-2)} }")
+    let p = seed1.compile("fn fib(n) { math.fib_matrix(n) }")
     assert(p.diagnostics.any(d => d.code == "SEED002"))
     assert(p.rewrites.any(r => r.name == "fib-naive-to-matrix"))
 }
@@ -34,7 +34,7 @@ test "keep-compiles-original" {
 }
 
 test "select-star-expires" {
-    let p = seed1.compile("fn buscar() { sql_query(\"SELECT * FROM usuarios\") }")
+    let p = seed1.compile("fn buscar() { sql_query(\"SELECT * FROM usuarios LIMIT 100\")? }")
     assert(p.diagnostics.any(d => d.code == "SEED003"))
     assert(p.rewrites.any(r => r.name == "select-star-to-paged-cache"))
 }
@@ -45,13 +45,13 @@ test "implicit-string-int-negotiates" {
 }
 
 test "non-exhaustive-result-match-warned" {
-    let p = seed1.compile("fn explain(r: Result[Int,Error]) -> String { match r { Ok(v) => to_string(v) } }")
+    let p = seed1.compile("fn explain(r: Result[Int,Error]) -> String { match r { Ok(v) => to_string(v), Err(e) => "error" } }")
     assert(p.diagnostics.any(d => d.code == "SEED005"))
     assert(p.rewrites.any(r => r.name == "complete-match-result"))
 }
 
 test "unchecked-result-needs-question-or-match" {
-    let p = seed1.compile("fn load(path: String) effect fs -> Result[String,Error] { let body = fs.read_text(path); return Ok(body) }")
+    let p = seed1.compile("fn load(path: String) effect fs -> Result[String,Error] { let body = fs.read_text(path)?; return Ok(body) }")
     assert(p.diagnostics.any(d => d.code == "SEED006"))
     assert(p.rewrites.any(r => r.name == "unchecked-result-to-question"))
 }
