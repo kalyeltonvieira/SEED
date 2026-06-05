@@ -283,6 +283,7 @@ public:
         }
         return false;
     }
+};
 
 
 
@@ -296,67 +297,7 @@ struct ASTNode {
 };
 
 // We will implement an incredibly relaxed CodeGen that just maps SEED tokens to C++ equivalents where needed,
-// effectively writing a structural transpiler!
-// Because full semantic AST resolution is complex, we will parse into block levels and translate.
-
-#include <iostream>
-#include <fstream>
-#include <string>
-#include <vector>
-#include <memory>
-#include <map>
-#include <cctype>
-#include <unordered_map>
-
-using namespace std;
-
-// (Lexer inserido no arquivo final via script ou merge)
-
-// ==========================================
-// AST & PARSER BASE
-// ==========================================
-
-class Parser {
-    vector<Token> tokens;
-    int pos = 0;
-
-public:
-    Parser(vector<Token> t) : tokens(t) {}
-
-    Token peek(int offset = 0) {
-        if (pos + offset >= tokens.size()) return {SeedToken::Eof, "", 0, 0};
-        return tokens[pos + offset];
-    }
-
-    Token advance() {
-        if (pos >= tokens.size()) return {SeedToken::Eof, "", 0, 0};
-        return tokens[pos++];
-    }
-
-    bool match(SeedToken type) {
-        if (peek().type == type) {
-            advance();
-            return true;
-        }
-        return false;
-    }
-
-    bool match_text(string text) {
-        if (peek().text == text) {
-            advance();
-            return true;
-        }
-        return false;
-    }
-
-    void expect(SeedToken type, string msg) {
-        if (!match(type)) {
-            cerr << "Parse error line " << peek().line << ": " << msg << " (got '" << peek().text << "')" << endl;
-            exit(1);
-        }
-    }
-
-};
+// Duplicate parser/include block removed
 
 struct TypeDef {
     string name;
