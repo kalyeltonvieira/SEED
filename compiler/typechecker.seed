@@ -14,12 +14,24 @@ type Type = {
 type TypeEnv = {
     types: dict
     effects: [string]
+    type_vars: dict
+    generic_context: [GenericContext]
+}
+
+type GenericContext = {
+    type_params: [string]
+    constraints: [TypeConstraint]
 }
 
 type TypeConstraint = {
     kind: string
     left: Type
     right: Type
+}
+
+type GenericInstance = {
+    base_type: Type
+    type_args: [Type]
 }
 
 type TypeError = {
@@ -54,6 +66,73 @@ fn type_named(name: string, params: [Type]) -> Type {
     return Type { kind: "Named", name: name, params: params }
 }
 
+fn type_union(types: [Type]) -> Type {
+    return Type { kind: "Union", name: "|", params: types }
+}
+
+fn instantiate_generic(base_type: Type, type_args: [Type]) -> Type {
+    match base_type.kind {
+        "Named" => {
+            return Type {
+                kind: "Named",
+                name: base_type.name,
+                params: type_args
+            }
+        }
+        "Function" => {
+            let param_count = base_type.params.len - 1
+            let new_params = []
+            
+            for i in 0..param_count {
+                if i < type_args.len {
+                    new_params.push(type_args[i])
+                } else {
+                    new_params.push(base_type.params[i])
+                }
+            }
+            
+            new_params.push(base_type.params[param_count])
+            
+            return Type {
+                kind: "Function",
+                name: "->",
+                params: new_params
+            }
+        }
+        _ => {
+            return base_type
+        }
+    }
+}
+
+fn push_generic_context(env: TypeEnv, type_params: [string], constraints: [TypeConstraint]) {
+    env.generic_context.push(GenericContext {
+        type_params: type_params,
+        constraints: constraints
+    })
+}
+
+fn pop_generic_context(env: TypeEnv) {
+    env.generic_context.pop()
+}
+
+fn resolve_type_var(env: TypeEnv, var_name: string) -> Type {
+    // Check in current generic context
+    if env.generic_context.len > 0 {
+        let ctx = env.generic_context[env.generic_context.len - 1]
+        if ctx.type_params.contains(var_name) {
+            return Type { kind: "TypeVar", name: var_name, params: [] }
+        }
+    }
+    
+    // Check in type_vars
+    if env.type_vars.contains(var_name) {
+        return env.type_vars[var_name]
+    }
+    
+    return Type { kind: "TypeVar", name: var_name, params: [] }
+}
+
 fn type_env() -> TypeEnv {
     return TypeEnv {
         types: dict([
@@ -65,7 +144,9 @@ fn type_env() -> TypeEnv {
             ("true", TYPE_BOOL),
             ("false", TYPE_BOOL)
         ]),
-        effects: []
+        effects: [],
+        type_vars: dict(),
+        generic_context: []
     }
 }
 
@@ -543,6 +624,13 @@ fn resolve_type(env: TypeEnv, type_node: ASTNode) -> Type {
             
             return type_function(param_types, return_type)
         }
+        "UnionType" => {
+            let union_types = []
+            for child in type_node.children {
+                union_types.push(resolve_type(env, child))
+            }
+            return type_union(union_types)
+        }
         _ => {
             return TYPE_ANY
         }
@@ -562,6 +650,25 @@ fn unify(t1: Type, t2: Type, env: TypeEnv, errors: [TypeError]) -> bool {
     if t2.kind == "TypeVar" {
         env.types[t2.name] = t1
         return true
+    }
+    
+    // Union type unification
+    if t1.kind == "Union" {
+        for union_type in t1.params {
+            if unify(union_type, t2, env, errors) {
+                return true
+            }
+        }
+        return false
+    }
+    
+    if t2.kind == "Union" {
+        for union_type in t2.params {
+            if unify(t1, union_type, env, errors) {
+                return true
+            }
+        }
+        return false
     }
     
     if t1.kind != t2.kind {
@@ -634,6 +741,9 @@ fn type_to_string(t: Type) -> string {
         }
         "Array" => {
             return "[" + type_to_string(t.params[0]) + "]"
+        }
+        "Union" => {
+            return t.params.map(p => type_to_string(p)).join(" | ")
         }
         "Named" => {
             if t.params.len > 0 {

@@ -2,7 +2,7 @@ module compiler.tests.compiler_test
 
 /// Testes de Integração do Compilador SEED
 /// Verifica se todas as fases funcionam juntas corretamente
-
+.
 use compiler.lexer
 use compiler.parser
 use compiler.typechecker

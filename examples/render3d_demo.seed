@@ -1,4 +1,4 @@
-import render3d
+import stdlib.render3d
 import stdlib.terminal
 
 fn main() {

@@ -110,7 +110,7 @@ public:
                 text == "return" || text == "match" || text == "type" || text == "struct" ||
                 text == "impl" || text == "enum" || text == "trait" || text == "mod" ||
                 text == "use" || text == "pub" || text == "async" || text == "await" ||
-                text == "spawn" || text == "macro" || text == "true" || text == "false") {
+                text == "spawn" || text == "macro" || text == "true" || text == "false" || text == "inline" || text == "overload" || text == "varargs") {
                 type = SeedToken::Keyword;
             }
             return {type, text, start_line, start_col};

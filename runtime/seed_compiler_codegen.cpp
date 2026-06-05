@@ -12,6 +12,8 @@ using namespace std;
 // (Lexer inserido no arquivo final via script ou merge)
 
 // ==========================================
+#include "ast.h" // Include AST definitions
+#include "stdlib_stub.h" // Stub for stdlib modules
 // AST & PARSER BASE
 // ==========================================
 
@@ -79,6 +81,8 @@ class Transpiler {
     unordered_map<string, TypeDef> types;
     vector<FuncDef> functions;
     vector<string> global_statements;
+    // New AST storage for function declarations
+    std::vector<std::unique_ptr<seed::FunctionDecl>> function_ast;
 
     Token peek(int offset = 0) {
         if (pos + offset >= tokens.size()) return {SeedToken::Eof, "", 0, 0};
@@ -281,14 +285,27 @@ class Transpiler {
             string block = parse_block();
             return "for (auto& " + var + " : " + iter + ") " + block;
         }
+        else if (t.text == "loop") {
+            advance();
+            string block = parse_block();
+            return "while (true) " + block;
+        }
         
-        if (t.text == "return") {
+        else if (t.text == "return") {
             advance();
             string expr = parse_expr(SeedToken::Semicolon, SeedToken::RBrace);
             if (peek().type == SeedToken::Semicolon) advance();
             return "return " + expr + ";";
         }
-        
+        else if (t.text == "break") {
+            advance();
+            return "break;";
+        }
+        else if (t.text == "continue") {
+            advance();
+            return "continue;";
+        }
+
         // Expression statement
         string expr = parse_expr(SeedToken::Semicolon, SeedToken::RBrace);
         if (peek().type == SeedToken::Semicolon) advance();
@@ -368,14 +385,62 @@ public:
                 if (peek().type == SeedToken::RBrace) advance(); // RBrace
             }
             else if (t.text == "fn" || t.text == "pub") {
-                if (t.text == "pub") advance();
-                advance(); // fn
+                // Optional visibility modifier
+                if (t.text == "pub") advance(); // skip 'pub'
+                // Optional inline keyword
+                bool is_inline = false;
+                if (peek().text == "inline") { advance(); is_inline = true; }
+                // Expect 'fn'
+                advance(); // consume 'fn'
                 string func_name = advance().text;
-                advance(); // LParen
+                // Parse optional generic parameters <T, U>
+                string generic_part = "";
+                if (peek().type == SeedToken::Less) {
+                    string gen_params;
+                    advance(); // '<'
+                    while (peek().type != SeedToken::Greater && peek().type != SeedToken::Eof) {
+                        gen_params += advance().text;
+                        if (peek().type == SeedToken::Comma) { gen_params += ", "; advance(); }
+                    }
+                    if (peek().type == SeedToken::Greater) advance(); // '>'
+                    generic_part = "template<" + gen_params + "> ";
+                }
+                // Parameter list
+                advance(); // '('
                 string params = "";
+                bool first = true;
                 while (peek().type != SeedToken::RParen) {
+                    // Variadic parameter detection
+                    if (peek().text == "...") { advance(); params += "..."; break; }
                     string pname = advance().text;
-                    advance(); // colon
+                    string ptype = "auto";
+                    // Optional type annotation
+                    if (peek().type == SeedToken::Colon) {
+                        advance(); // ':'
+                        ptype = map_type(parse_type_str());
+                    }
+                    // Optional default value
+                    string default_val = "";
+                    if (peek().type == SeedToken::Assign) {
+                        advance(); // '='
+                        default_val = " = " + parse_expr(SeedToken::Comma, SeedToken::RParen);
+                    }
+                    if (!first) params += ", ";
+                    params += ptype + " " + pname + default_val;
+                    first = false;
+                    if (peek().type == SeedToken::Comma) advance();
+                }
+                advance(); // ')'
+                // Return type
+                string ret_type = "void";
+                if (peek().type == SeedToken::Arrow) {
+                    advance();
+                    ret_type = map_type(parse_type_str());
+                }
+                string block = parse_block();
+                string sig = generic_part + (is_inline ? "inline " : "") + "auto " + func_name + "(" + params + ") -> " + ret_type;
+                functions.push_back({sig, block});
+            }
                     string ptype = map_type(parse_type_str());
                     params += ptype + " " + pname;
                     if (peek().type == SeedToken::Comma) { advance(); params += ", "; }
@@ -391,8 +456,8 @@ public:
                 string sig = "auto " + func_name + "(" + params + ") -> " + ret_type;
                 functions.push_back({sig, block});
             }
-            else if (t.text == "use" || t.text == "mod") {
-                // skip for now or transpile to include
+            else if (t.text == "use" || t.text == "mod" || t.text == "import") {
+                // skip for now; import will be handled via stub header
                 while (peek().type != SeedToken::Semicolon && peek().line == t.line) advance();
             }
             else {
@@ -401,15 +466,10 @@ public:
             }
         }
     }
-    
-    string generate_cpp() {
-        string cpp = "#include \"seed_lib.hpp\"\n\n";
-        
-        // Forward declarations of structs
-        for (auto& pair : types) cpp += "struct " + pair.first + ";\n";
-        cpp += "\n";
-        
-        // Struct definitions
+        string generate_cpp() {
+        string cpp;
+        cpp += "#include \"stdlib_stub.h\"\n";
+        // cpp += "#include \"seed_lib.hpp\"\n";
         for (auto& pair : types) {
             cpp += "struct " + pair.first + " {\n" + pair.second.body_cpp + "\n";
             for (auto& decl : pair.second.methods_decls) cpp += "    " + decl + "\n";
@@ -421,15 +481,53 @@ public:
             for (auto& impl : pair.second.methods_impls) cpp += impl + "\n\n";
         }
         
-        // Function forward declarations
+                // Function forward declarations (legacy)
         for (auto& fn : functions) {
             if (fn.signature.find("main(") == string::npos) {
                 cpp += fn.signature + ";\n";
             }
         }
+        // Function forward declarations from AST
+        auto buildFunction = [&](const seed::FunctionDecl& fd, bool isDefinition) -> string {
+            string result;
+            // Template parameters
+            if (!fd.generics.empty()) {
+                result += "template<";
+                for (size_t i = 0; i < fd.generics.size(); ++i) {
+                    result += "typename " + fd.generics[i].name;
+                    if (i + 1 < fd.generics.size()) result += ", ";
+                }
+                result += ">\n";
+            }
+            // Signature
+            string sig;
+            if (fd.isInline) sig += "inline ";
+            sig += fd.returnType.empty() ? "void" : fd.returnType;
+            sig += " " + fd.name + "(";
+            for (size_t i = 0; i < fd.params.size(); ++i) {
+                const auto& p = fd.params[i];
+                sig += p.type + " " + p.name;
+                if (!p.defaultValue.empty()) sig += " = " + p.defaultValue;
+                if (i + 1 < fd.params.size()) sig += ", ";
+            }
+            sig += ")";
+            result += sig;
+            if (isDefinition) {
+                result += " {}";
+            } else {
+                result += ";";
+            }
+            return result;
+        };
+
+        for (auto& fd_ptr : function_ast) {
+            const auto& fd = *fd_ptr;
+            cpp += buildFunction(fd, false) + "\n";
+        }
+
         cpp += "\n";
-        
-        // Function implementations
+
+        // Function implementations (legacy)
         for (auto& fn : functions) {
             if (fn.signature.find("main(") != string::npos) {
                 cpp += "int main(int argc, char** argv) " + fn.body_cpp + "\n\n";
@@ -437,7 +535,12 @@ public:
                 cpp += fn.signature + " " + fn.body_cpp + "\n\n";
             }
         }
-        
+        // Function implementations from AST (placeholder bodies)
+        for (auto& fd_ptr : function_ast) {
+            const auto& fd = *fd_ptr;
+            cpp += buildFunction(fd, true) + "\n\n";
+        }
+
         return cpp;
     }
 };

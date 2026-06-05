@@ -1,0 +1,1072 @@
+module compiler.ir
+
+import compiler.parser
+
+/// Intermediate Representation (IR) para SEED
+/// Representação intermediária entre AST e codegen
+/// Permite otimizações independentes da arquitetura alvo
+
+type IRInstruction = {
+    id: int
+    opcode: IROpcode
+    operands: [IROperand]
+    result: Option[IRValue]
+    line: int
+    column: int
+}
+
+type IROpcode = {
+    name: string
+    kind: string
+}
+
+type IROperand = {
+    value: IRValue
+    type: Type
+}
+
+type IRValue = {
+    kind: string
+    data: string
+}
+
+type Type = {
+    kind: string
+    name: string
+    params: [Type]
+}
+
+type IRBlock = {
+    label: string
+    instructions: [IRInstruction]
+    predecessors: [string]
+    successors: [string]
+}
+
+type IRFunction = {
+    name: string
+    params: [IRParam]
+    return_type: Type
+    blocks: dict
+    entry_block: string
+}
+
+type IRParam = {
+    name: string
+    type: Type
+}
+
+type IRModule = {
+    name: string
+    functions: dict
+    globals: dict
+    constants: [IRConstant]
+}
+
+type IRConstant = {
+    value: any
+    type: Type
+}
+
+type IRContext = {
+    module: IRModule
+    current_function: Option[string]
+    current_block: Option[string]
+    value_counter: int
+    block_counter: int
+}
+
+// Opcodes IR
+const OP_CONST = IROpcode { name: "const", kind: "value" }
+const OP_LOAD = IROpcode { name: "load", kind: "memory" }
+const OP_STORE = IROpcode { name: "store", kind: "memory" }
+const OP_ADD = IROpcode { name: "add", kind: "arithmetic" }
+const OP_SUB = IROpcode { name: "sub", kind: "arithmetic" }
+const OP_MUL = IROpcode { name: "mul", kind: "arithmetic" }
+const OP_DIV = IROpcode { name: "div", kind: "arithmetic" }
+const OP_MOD = IROpcode { name: "mod", kind: "arithmetic" }
+const OP_NEG = IROpcode { name: "neg", kind: "arithmetic" }
+const OP_EQ = IROpcode { name: "eq", kind: "comparison" }
+const OP_NEQ = IROpcode { name: "neq", kind: "comparison" }
+const OP_LT = IROpcode { name: "lt", kind: "comparison" }
+const OP_GT = IROpcode { name: "gt", kind: "comparison" }
+const OP_LTE = IROpcode { name: "lte", kind: "comparison" }
+const OP_GTE = IROpcode { name: "gte", kind: "comparison" }
+const OP_AND = IROpcode { name: "and", kind: "logical" }
+const OP_OR = IROpcode { name: "or", kind: "logical" }
+const OP_NOT = IROpcode { name: "not", kind: "logical" }
+const OP_CALL = IROpcode { name: "call", kind: "control" }
+const OP_RET = IROpcode { name: "ret", kind: "control" }
+const OP_JMP = IROpcode { name: "jmp", kind: "control" }
+const OP_JZ = IROpcode { name: "jz", kind: "control" }
+const OP_JNZ = IROpcode { name: "jnz", kind: "control" }
+const OP_PHI = IROpcode { name: "phi", kind: "ssa" }
+const OP_CAST = IROpcode { name: "cast", kind: "conversion" }
+const OP_ALLOC = IROpcode { name: "alloc", kind: "memory" }
+const OP_FREE = IROpcode { name: "free", kind: "memory" }
+const OP_GET_FIELD = IROpcode { name: "get_field", kind: "aggregate" }
+const OP_SET_FIELD = IROpcode { name: "set_field", kind: "aggregate" }
+const OP_GET_ELEM = IROpcode { name: "get_elem", kind: "aggregate" }
+const OP_SET_ELEM = IROpcode { name: "set_elem", kind: "aggregate" }
+const OP_LEN = IROpcode { name: "len", kind: "aggregate" }
+const OP_MAKE_CLOSURE = IROpcode { name: "make_closure", kind: "closure" }
+const OP_CAPTURE = IROpcode { name: "capture", kind: "closure" }
+
+fn ir_context(module_name: string) -> IRContext {
+    return IRContext {
+        module: IRModule {
+            name: module_name,
+            functions: dict(),
+            globals: dict(),
+            constants: []
+        },
+        current_function: Option[string].None,
+        current_block: Option[string].None,
+        value_counter: 0,
+        block_counter: 0
+    }
+}
+
+fn generate_ir(ast: ASTNode) -> IRModule {
+    let ctx = ir_context("main")
+    lower_module(ctx, ast)
+    return ctx.module
+}
+
+fn lower_module(ctx: IRContext, node: ASTNode) {
+    match node.type {
+        "Module" => {
+            for child in node.children {
+                lower_module(ctx, child)
+            }
+        }
+        "Function" => {
+            lower_function(ctx, node)
+        }
+        "LetDeclaration" | "ConstDeclaration" => {
+            lower_global(ctx, node)
+        }
+        _ => {}
+    }
+}
+
+fn lower_function(ctx: IRContext, node: ASTNode) {
+    let name = node.value
+    let params_node = node.children[0]
+    let return_type_node = node.children[1]
+    let body = node.children[2]
+    
+    // Create function
+    let func = IRFunction {
+        name: name,
+        params: [],
+        return_type: resolve_type(return_type_node),
+        blocks: dict(),
+        entry_block: ""
+    }
+    
+    ctx.current_function = Option[string].Some(name)
+    ctx.module.functions[name] = func
+    
+    // Create entry block
+    let entry_label = new_block(ctx)
+    func.entry_block = entry_label
+    func.blocks[entry_label] = IRBlock {
+        label: entry_label,
+        instructions: [],
+        predecessors: [],
+        successors: []
+    }
+    
+    ctx.current_block = Option[string].Some(entry_label)
+    
+    // Lower parameters
+    for param in params_node.children {
+        func.params.push(IRParam {
+            name: param.value,
+            type: resolve_type(param.children[0])
+        })
+    }
+    
+    // Lower body
+    lower_block(ctx, body)
+    
+    // Add implicit return if needed
+    let block = func.blocks[entry_label]
+    if block.instructions.len == 0 || 
+       block.instructions[block.instructions.len - 1].opcode.name != "ret" {
+        add_instruction(ctx, IRInstruction {
+            id: next_id(ctx),
+            opcode: OP_RET,
+            operands: [],
+            result: Option[IRValue].None,
+            line: node.line,
+            column: node.column
+        })
+    }
+}
+
+fn lower_global(ctx: IRContext, node: ASTNode) {
+    let name = node.value
+    let init = node.children[1]
+    
+    if init != null {
+        let value = lower_expression(ctx, init)
+        ctx.module.globals[name] = value
+    }
+}
+
+fn lower_block(ctx: IRContext, node: ASTNode) {
+    for stmt in node.children {
+        lower_statement(ctx, stmt)
+    }
+}
+
+fn lower_statement(ctx: IRContext, node: ASTNode) {
+    match node.type {
+        "LetDeclaration" | "ConstDeclaration" => {
+            let name = node.value
+            let init = node.children[1]
+            let value = lower_expression(ctx, init)
+            
+            let alloc_result = new_value(ctx, "ptr")
+            add_instruction(ctx, IRInstruction {
+                id: next_id(ctx),
+                opcode: OP_ALLOC,
+                operands: [IROperand {
+                    value: IRValue { kind: "size", data: "8" },
+                    type: Type { kind: "Int", name: "Int", params: [] }
+                }],
+                result: Option[IRValue].Some(alloc_result),
+                line: node.line,
+                column: node.column
+            })
+            
+            add_instruction(ctx, IRInstruction {
+                id: next_id(ctx),
+                opcode: OP_STORE,
+                operands: [
+                    IROperand { value: alloc_result, type: Type { kind: "Ptr", name: "Ptr", params: [] } },
+                    IROperand { value: value, type: Type { kind: "Any", name: "Any", params: [] } }
+                ],
+                result: Option[IRValue].None,
+                line: node.line,
+                column: node.column
+            })
+        }
+        "If" => {
+            lower_if(ctx, node)
+        }
+        "While" => {
+            lower_while(ctx, node)
+        }
+        "For" => {
+            lower_for(ctx, node)
+        }
+        "Return" => {
+            let value = node.children[0]
+            if value != null {
+                let ir_value = lower_expression(ctx, value)
+                add_instruction(ctx, IRInstruction {
+                    id: next_id(ctx),
+                    opcode: OP_RET,
+                    operands: [IROperand {
+                        value: ir_value,
+                        type: Type { kind: "Any", name: "Any", params: [] }
+                    }],
+                    result: Option[IRValue].None,
+                    line: node.line,
+                    column: node.column
+                })
+            } else {
+                add_instruction(ctx, IRInstruction {
+                    id: next_id(ctx),
+                    opcode: OP_RET,
+                    operands: [],
+                    result: Option[IRValue].None,
+                    line: node.line,
+                    column: node.column
+                })
+            }
+        }
+        "Match" => {
+            lower_match(ctx, node)
+        }
+        _ => {
+            // Expression statement
+            lower_expression(ctx, node)
+        }
+    }
+}
+
+fn lower_if(ctx: IRContext, node: ASTNode) {
+    let condition = node.children[0]
+    let then_branch = node.children[1]
+    let else_branch = node.children[2]
+    
+    let cond_value = lower_expression(ctx, condition)
+    
+    let then_label = new_block(ctx)
+    let else_label = if else_branch != null { new_block(ctx) } else { "" }
+    let end_label = new_block(ctx)
+    
+    // Conditional jump
+    add_instruction(ctx, IRInstruction {
+        id: next_id(ctx),
+        opcode: OP_JNZ,
+        operands: [IROperand {
+            value: cond_value,
+            type: Type { kind: "Bool", name: "Bool", params: [] }
+        }],
+        result: Option[IRValue].Some(IRValue { kind: "label", data: then_label }),
+        line: node.line,
+        column: node.column
+    })
+    
+    // Jump to else or end
+    if else_branch != null {
+        add_instruction(ctx, IRInstruction {
+            id: next_id(ctx),
+            opcode: OP_JMP,
+            operands: [],
+            result: Option[IRValue].Some(IRValue { kind: "label", data: else_label }),
+            line: node.line,
+            column: node.column
+        })
+    } else {
+        add_instruction(ctx, IRInstruction {
+            id: next_id(ctx),
+            opcode: OP_JMP,
+            operands: [],
+            result: Option[IRValue].Some(IRValue { kind: "label", data: end_label }),
+            line: node.line,
+            column: node.column
+        })
+    }
+    
+    // Then block
+    set_current_block(ctx, then_label)
+    lower_block(ctx, then_branch)
+    add_instruction(ctx, IRInstruction {
+        id: next_id(ctx),
+        opcode: OP_JMP,
+        operands: [],
+        result: Option[IRValue].Some(IRValue { kind: "label", data: end_label }),
+        line: node.line,
+        column: node.column
+    })
+    
+    // Else block
+    if else_branch != null {
+        set_current_block(ctx, else_label)
+        lower_block(ctx, else_branch)
+        add_instruction(ctx, IRInstruction {
+            id: next_id(ctx),
+            opcode: OP_JMP,
+            operands: [],
+            result: Option[IRValue].Some(IRValue { kind: "label", data: end_label }),
+            line: node.line,
+            column: node.column
+        })
+    }
+    
+    // End block
+    set_current_block(ctx, end_label)
+}
+
+fn lower_while(ctx: IRContext, node: ASTNode) {
+    let condition = node.children[0]
+    let body = node.children[1]
+    
+    let cond_label = new_block(ctx)
+    let body_label = new_block(ctx)
+    let end_label = new_block(ctx)
+    
+    // Jump to condition
+    add_instruction(ctx, IRInstruction {
+        id: next_id(ctx),
+        opcode: OP_JMP,
+        operands: [],
+        result: Option[IRValue].Some(IRValue { kind: "label", data: cond_label }),
+        line: node.line,
+        column: node.column
+    })
+    
+    // Condition block
+    set_current_block(ctx, cond_label)
+    let cond_value = lower_expression(ctx, condition)
+    add_instruction(ctx, IRInstruction {
+        id: next_id(ctx),
+        opcode: OP_JNZ,
+        operands: [IROperand {
+            value: cond_value,
+            type: Type { kind: "Bool", name: "Bool", params: [] }
+        }],
+        result: Option[IRValue].Some(IRValue { kind: "label", data: body_label }),
+        line: node.line,
+        column: node.column
+    })
+    add_instruction(ctx, IRInstruction {
+        id: next_id(ctx),
+        opcode: OP_JMP,
+        operands: [],
+        result: Option[IRValue].Some(IRValue { kind: "label", data: end_label }),
+        line: node.line,
+        column: node.column
+    })
+    
+    // Body block
+    set_current_block(ctx, body_label)
+    lower_block(ctx, body)
+    add_instruction(ctx, IRInstruction {
+        id: next_id(ctx),
+        opcode: OP_JMP,
+        operands: [],
+        result: Option[IRValue].Some(IRValue { kind: "label", data: cond_label }),
+        line: node.line,
+        column: node.column
+    })
+    
+    // End block
+    set_current_block(ctx, end_label)
+}
+
+fn lower_for(ctx: IRContext, node: ASTNode) {
+    let pattern = node.children[0]
+    let iterable = node.children[1]
+    let body = node.children[2]
+    
+    let iter_value = lower_expression(ctx, iterable)
+    
+    let cond_label = new_block(ctx)
+    let body_label = new_block(ctx)
+    let end_label = new_block(ctx)
+    
+    // Setup iterator
+    let iter_result = new_value(ctx, "iter")
+    add_instruction(ctx, IRInstruction {
+        id: next_id(ctx),
+        opcode: OP_CALL,
+        operands: [IROperand {
+            value: IRValue { kind: "function", data: "iter" },
+            type: Type { kind: "Function", name: "iter", params: [] }
+        }, IROperand {
+            value: iter_value,
+            type: Type { kind: "Any", name: "Any", params: [] }
+        }],
+        result: Option[IRValue].Some(iter_result),
+        line: node.line,
+        column: node.column
+    })
+    
+    // Jump to condition
+    add_instruction(ctx, IRInstruction {
+        id: next_id(ctx),
+        opcode: OP_JMP,
+        operands: [],
+        result: Option[IRValue].Some(IRValue { kind: "label", data: cond_label }),
+        line: node.line,
+        column: node.column
+    })
+    
+    // Condition block
+    set_current_block(ctx, cond_label)
+    let has_next_result = new_value(ctx, "has_next")
+    add_instruction(ctx, IRInstruction {
+        id: next_id(ctx),
+        opcode: OP_CALL,
+        operands: [IROperand {
+            value: IRValue { kind: "function", data: "has_next" },
+            type: Type { kind: "Function", name: "has_next", params: [] }
+        }, IROperand {
+            value: iter_result,
+            type: Type { kind: "Any", name: "Any", params: [] }
+        }],
+        result: Option[IRValue].Some(has_next_result),
+        line: node.line,
+        column: node.column
+    })
+    add_instruction(ctx, IRInstruction {
+        id: next_id(ctx),
+        opcode: OP_JNZ,
+        operands: [IROperand {
+            value: has_next_result,
+            type: Type { kind: "Bool", name: "Bool", params: [] }
+        }],
+        result: Option[IRValue].Some(IRValue { kind: "label", data: body_label }),
+        line: node.line,
+        column: node.column
+    })
+    add_instruction(ctx, IRInstruction {
+        id: next_id(ctx),
+        opcode: OP_JMP,
+        operands: [],
+        result: Option[IRValue].Some(IRValue { kind: "label", data: end_label }),
+        line: node.line,
+        column: node.column
+    })
+    
+    // Body block
+    set_current_block(ctx, body_label)
+    let next_result = new_value(ctx, "next")
+    add_instruction(ctx, IRInstruction {
+        id: next_id(ctx),
+        opcode: OP_CALL,
+        operands: [IROperand {
+            value: IRValue { kind: "function", data: "next" },
+            type: Type { kind: "Function", name: "next", params: [] }
+        }, IROperand {
+            value: iter_result,
+            type: Type { kind: "Any", name: "Any", params: [] }
+        }],
+        result: Option[IRValue].Some(next_result),
+        line: node.line,
+        column: node.column
+    })
+    
+    // Store in pattern variable
+    let pattern_alloc = new_value(ctx, "ptr")
+    add_instruction(ctx, IRInstruction {
+        id: next_id(ctx),
+        opcode: OP_ALLOC,
+        operands: [IROperand {
+            value: IRValue { kind: "size", data: "8" },
+            type: Type { kind: "Int", name: "Int", params: [] }
+        }],
+        result: Option[IRValue].Some(pattern_alloc),
+        line: node.line,
+        column: node.column
+    })
+    add_instruction(ctx, IRInstruction {
+        id: next_id(ctx),
+        opcode: OP_STORE,
+        operands: [
+            IROperand { value: pattern_alloc, type: Type { kind: "Ptr", name: "Ptr", params: [] } },
+            IROperand { value: next_result, type: Type { kind: "Any", name: "Any", params: [] } }
+        ],
+        result: Option[IRValue].None,
+        line: node.line,
+        column: node.column
+    })
+    
+    lower_block(ctx, body)
+    add_instruction(ctx, IRInstruction {
+        id: next_id(ctx),
+        opcode: OP_JMP,
+        operands: [],
+        result: Option[IRValue].Some(IRValue { kind: "label", data: cond_label }),
+        line: node.line,
+        column: node.column
+    })
+    
+    // End block
+    set_current_block(ctx, end_label)
+}
+
+fn lower_match(ctx: IRContext, node: ASTNode) {
+    let value = node.children[0]
+    let arms = node.children.slice(1, node.children.len)
+    
+    let value_result = lower_expression(ctx, value)
+    
+    let end_label = new_block(ctx)
+    
+    for i in 0..arms.len {
+        let arm = arms[i]
+        let pattern = arm.children[0]
+        let body = arm.children[1]
+        
+        let arm_label = new_block(ctx)
+        let next_label = if i < arms.len - 1 { new_block(ctx) } else { end_label }
+        
+        // Check pattern
+        let pattern_result = lower_pattern(ctx, pattern)
+        let cmp_result = new_value(ctx, "cmp")
+        add_instruction(ctx, IRInstruction {
+            id: next_id(ctx),
+            opcode: OP_EQ,
+            operands: [
+                IROperand { value: value_result, type: Type { kind: "Any", name: "Any", params: [] } },
+                IROperand { value: pattern_result, type: Type { kind: "Any", name: "Any", params: [] } }
+            ],
+            result: Option[IRValue].Some(cmp_result),
+            line: node.line,
+            column: node.column
+        })
+        
+        add_instruction(ctx, IRInstruction {
+            id: next_id(ctx),
+            opcode: OP_JNZ,
+            operands: [IROperand {
+                value: cmp_result,
+                type: Type { kind: "Bool", name: "Bool", params: [] }
+            }],
+            result: Option[IRValue].Some(IRValue { kind: "label", data: arm_label }),
+            line: node.line,
+            column: node.column
+        })
+        
+        add_instruction(ctx, IRInstruction {
+            id: next_id(ctx),
+            opcode: OP_JMP,
+            operands: [],
+            result: Option[IRValue].Some(IRValue { kind: "label", data: next_label }),
+            line: node.line,
+            column: node.column
+        })
+        
+        // Arm block
+        set_current_block(ctx, arm_label)
+        let body_result = lower_expression(ctx, body)
+        add_instruction(ctx, IRInstruction {
+            id: next_id(ctx),
+            opcode: OP_JMP,
+            operands: [],
+            result: Option[IRValue].Some(IRValue { kind: "label", data: end_label }),
+            line: node.line,
+            column: node.column
+        })
+        
+        set_current_block(ctx, next_label)
+    }
+    
+    set_current_block(ctx, end_label)
+}
+
+fn lower_pattern(ctx: IRContext, node: ASTNode) -> IRValue {
+    match node.type {
+        "IdentifierPattern" => {
+            return IRValue { kind: "identifier", data: node.value }
+        }
+        "WildcardPattern" => {
+            return IRValue { kind: "wildcard", data: "_" }
+        }
+        _ => {
+            return IRValue { kind: "literal", data: node.value.to_string() }
+        }
+    }
+}
+
+fn lower_expression(ctx: IRContext, node: ASTNode) -> IRValue {
+    match node.type {
+        "BinaryOp" => {
+            return lower_binary_op(ctx, node)
+        }
+        "UnaryOp" => {
+            return lower_unary_op(ctx, node)
+        }
+        "Call" => {
+            return lower_call(ctx, node)
+        }
+        "FieldAccess" => {
+            return lower_field_access(ctx, node)
+        }
+        "Identifier" => {
+            return IRValue { kind: "identifier", data: node.value }
+        }
+        "NumberLiteral" => {
+            let result = new_value(ctx, "const")
+            ctx.module.constants.push(IRConstant {
+                value: node.value,
+                type: if node.value.contains(".") { 
+                    Type { kind: "Float", name: "Float", params: [] } 
+                } else { 
+                    Type { kind: "Int", name: "Int", params: [] } 
+                }
+            })
+            add_instruction(ctx, IRInstruction {
+                id: next_id(ctx),
+                opcode: OP_CONST,
+                operands: [IROperand {
+                    value: IRValue { kind: "constant", data: (ctx.module.constants.len - 1).to_string() },
+                    type: Type { kind: "Any", name: "Any", params: [] }
+                }],
+                result: Option[IRValue].Some(result),
+                line: node.line,
+                column: node.column
+            })
+            return result
+        }
+        "StringLiteral" => {
+            let result = new_value(ctx, "const")
+            ctx.module.constants.push(IRConstant {
+                value: node.value,
+                type: Type { kind: "String", name: "String", params: [] }
+            })
+            add_instruction(ctx, IRInstruction {
+                id: next_id(ctx),
+                opcode: OP_CONST,
+                operands: [IROperand {
+                    value: IRValue { kind: "constant", data: (ctx.module.constants.len - 1).to_string() },
+                    type: Type { kind: "Any", name: "Any", params: [] }
+                }],
+                result: Option[IRValue].Some(result),
+                line: node.line,
+                column: node.column
+            })
+            return result
+        }
+        "BooleanLiteral" => {
+            let result = new_value(ctx, "const")
+            ctx.module.constants.push(IRConstant {
+                value: node.value,
+                type: Type { kind: "Bool", name: "Bool", params: [] }
+            })
+            add_instruction(ctx, IRInstruction {
+                id: next_id(ctx),
+                opcode: OP_CONST,
+                operands: [IROperand {
+                    value: IRValue { kind: "constant", data: (ctx.module.constants.len - 1).to_string() },
+                    type: Type { kind: "Any", name: "Any", params: [] }
+                }],
+                result: Option[IRValue].Some(result),
+                line: node.line,
+                column: node.column
+            })
+            return result
+        }
+        "ArrayLiteral" => {
+            return lower_array_literal(ctx, node)
+        }
+        _ => {
+            return IRValue { kind: "unknown", data: "" }
+        }
+    }
+}
+
+fn lower_binary_op(ctx: IRContext, node: ASTNode) -> IRValue {
+    let left = lower_expression(ctx, node.children[0])
+    let right = lower_expression(ctx, node.children[1])
+    let op = node.value
+    
+    let opcode = match op {
+        "+" => OP_ADD
+        "-" => OP_SUB
+        "*" => OP_MUL
+        "/" => OP_DIV
+        "%" => OP_MOD
+        "==" => OP_EQ
+        "!=" => OP_NEQ
+        "<" => OP_LT
+        ">" => OP_GT
+        "<=" => OP_LTE
+        ">=" => OP_GTE
+        "&&" => OP_AND
+        "||" => OP_OR
+        _ => OP_ADD
+    }
+    
+    let result = new_value(ctx, "binop")
+    add_instruction(ctx, IRInstruction {
+        id: next_id(ctx),
+        opcode: opcode,
+        operands: [
+            IROperand { value: left, type: Type { kind: "Any", name: "Any", params: [] } },
+            IROperand { value: right, type: Type { kind: "Any", name: "Any", params: [] } }
+        ],
+        result: Option[IRValue].Some(result),
+        line: node.line,
+        column: node.column
+    })
+    
+    return result
+}
+
+fn lower_unary_op(ctx: IRContext, node: ASTNode) -> IRValue {
+    let operand = lower_expression(ctx, node.children[0])
+    let op = node.value
+    
+    let opcode = match op {
+        "-" => OP_NEG
+        "!" => OP_NOT
+        _ => OP_NEG
+    }
+    
+    let result = new_value(ctx, "unop")
+    add_instruction(ctx, IRInstruction {
+        id: next_id(ctx),
+        opcode: opcode,
+        operands: [IROperand {
+            value: operand,
+            type: Type { kind: "Any", name: "Any", params: [] }
+        }],
+        result: Option[IRValue].Some(result),
+        line: node.line,
+        column: node.column
+    })
+    
+    return result
+}
+
+fn lower_call(ctx: IRContext, node: ASTNode) -> IRValue {
+    let callee = lower_expression(ctx, node.children[0])
+    let args = node.children[1]
+    
+    let arg_values = []
+    for arg in args.children {
+        arg_values.push(lower_expression(ctx, arg))
+    }
+    
+    let operands = [IROperand {
+        value: callee,
+        type: Type { kind: "Function", name: "Function", params: [] }
+    }]
+    
+    for arg in arg_values {
+        operands.push(IROperand {
+            value: arg,
+            type: Type { kind: "Any", name: "Any", params: [] }
+        })
+    }
+    
+    let result = new_value(ctx, "call")
+    add_instruction(ctx, IRInstruction {
+        id: next_id(ctx),
+        opcode: OP_CALL,
+        operands: operands,
+        result: Option[IRValue].Some(result),
+        line: node.line,
+        column: node.column
+    })
+    
+    return result
+}
+
+fn lower_field_access(ctx: IRContext, node: ASTNode) -> IRValue {
+    let object = lower_expression(ctx, node.children[0])
+    let field = node.value
+    
+    let result = new_value(ctx, "field")
+    add_instruction(ctx, IRInstruction {
+        id: next_id(ctx),
+        opcode: OP_GET_FIELD,
+        operands: [
+            IROperand { value: object, type: Type { kind: "Any", name: "Any", params: [] } },
+            IROperand { value: IRValue { kind: "string", data: field }, type: Type { kind: "String", name: "String", params: [] } }
+        ],
+        result: Option[IRValue].Some(result),
+        line: node.line,
+        column: node.column
+    })
+    
+    return result
+}
+
+fn lower_array_literal(ctx: IRContext, node: ASTNode) -> IRValue {
+    let elem_values = []
+    for elem in node.children {
+        elem_values.push(lower_expression(ctx, elem))
+    }
+    
+    let result = new_value(ctx, "array")
+    
+    // Allocate array
+    let alloc_result = new_value(ctx, "ptr")
+    add_instruction(ctx, IRInstruction {
+        id: next_id(ctx),
+        opcode: OP_ALLOC,
+        operands: [IROperand {
+            value: IRValue { kind: "size", data: (node.children.len * 8).to_string() },
+            type: Type { kind: "Int", name: "Int", params: [] }
+        }],
+        result: Option[IRValue].Some(alloc_result),
+        line: node.line,
+        column: node.column
+    })
+    
+    // Store elements
+    for i in 0..elem_values.len {
+        add_instruction(ctx, IRInstruction {
+            id: next_id(ctx),
+            opcode: OP_SET_ELEM,
+            operands: [
+                IROperand { value: alloc_result, type: Type { kind: "Ptr", name: "Ptr", params: [] } },
+                IROperand { value: IRValue { kind: "index", data: i.to_string() }, type: Type { kind: "Int", name: "Int", params: [] } },
+                IROperand { value: elem_values[i], type: Type { kind: "Any", name: "Any", params: [] } }
+            ],
+            result: Option[IRValue].None,
+            line: node.line,
+            column: node.column
+        })
+    }
+    
+    return alloc_result
+}
+
+fn resolve_type(node: ASTNode) -> Type {
+    if node == null {
+        return Type { kind: "Any", name: "Any", params: [] }
+    }
+    
+    match node.type {
+        "NamedType" => {
+            return Type { kind: "Named", name: node.value, params: [] }
+        }
+        "ArrayType" => {
+            let inner = resolve_type(node.children[0])
+            return Type { kind: "Array", name: "[]", params: [inner] }
+        }
+        "FunctionType" => {
+            let params = node.children[0]
+            let return_type = resolve_type(node.children[1])
+            
+            let param_types = []
+            for param in params.children {
+                param_types.push(resolve_type(param))
+            }
+            
+            return Type { kind: "Function", name: "->", params: param_types + [return_type] }
+        }
+        _ => {
+            return Type { kind: "Any", name: "Any", params: [] }
+        }
+    }
+}
+
+fn new_value(ctx: IRContext, kind: string) -> IRValue {
+    let id = ctx.value_counter
+    ctx.value_counter = ctx.value_counter + 1
+    return IRValue { kind: kind, data: kind + "_" + id.to_string() }
+}
+
+fn new_block(ctx: IRContext) -> string {
+    let id = ctx.block_counter
+    ctx.block_counter = ctx.block_counter + 1
+    let label = "block_" + id.to_string()
+    
+    match ctx.current_function {
+        Option[string].Some(func_name) => {
+            let func = ctx.module.functions[func_name]
+            func.blocks[label] = IRBlock {
+                label: label,
+                instructions: [],
+                predecessors: [],
+                successors: []
+            }
+        }
+        Option[string].None => {}
+    }
+    
+    return label
+}
+
+fn set_current_block(ctx: IRContext, label: string) {
+    ctx.current_block = Option[string].Some(label)
+}
+
+fn add_instruction(ctx: IRContext, instr: IRInstruction) {
+    match ctx.current_block {
+        Option[string].Some(block_label) => {
+            match ctx.current_function {
+                Option[string].Some(func_name) => {
+                    let func = ctx.module.functions[func_name]
+                    func.blocks[block_label].instructions.push(instr)
+                }
+                Option[string].None => {}
+            }
+        }
+        Option[string].None => {}
+    }
+}
+
+fn next_id(ctx: IRContext) -> int {
+    let id = ctx.value_counter
+    ctx.value_counter = ctx.value_counter + 1
+    return id
+}
+
+// IR optimizations
+fn optimize_ir(module: IRModule) -> IRModule {
+    let optimized = module
+    
+    // Apply optimizations
+    optimized = constant_propagation(optimized)
+    optimized = dead_code_elimination_ir(optimized)
+    optimized = common_subexpression_elimination(optimized)
+    
+    return optimized
+}
+
+fn constant_propagation(module: IRModule) -> IRModule {
+    // Propagate constant values through the IR
+    return module
+}
+
+fn dead_code_elimination_ir(module: IRModule) -> IRModule {
+    // Remove dead code from IR
+    return module
+}
+
+fn common_subexpression_elimination(module: IRModule) -> IRModule {
+    // Eliminate common subexpressions
+    return module
+}
+
+// IR to string conversion for debugging
+fn ir_to_string(module: IRModule) -> string {
+    let result = "Module: " + module.name + "\n\n"
+    
+    for (func_name, func) in module.functions {
+        result = result + "fn " + func_name + "("
+        
+        for i in 0..func.params.len {
+            if i > 0 { result = result + ", " }
+            result = result + func.params[i].name + ": " + type_to_string(func.params[i].type)
+        }
+        
+        result = result + ") -> " + type_to_string(func.return_type) + " {\n"
+        
+        for (block_label, block) in func.blocks {
+            result = result + "  " + block_label + ":\n"
+            
+            for instr in block.instructions {
+                result = result + "    " + instr.id.to_string() + ": " + instr.opcode.name
+                
+                for operand in instr.operands {
+                    result = result + " " + ir_value_to_string(operand.value)
+                }
+                
+                match instr.result {
+                    Option[IRValue].Some(res) => {
+                        result = result + " -> " + ir_value_to_string(res)
+                    }
+                    Option[IRValue].None => {}
+                }
+                
+                result = result + "\n"
+            }
+        }
+        
+        result = result + "}\n\n"
+    }
+    
+    return result
+}
+
+fn type_to_string(t: Type) -> string {
+    match t.kind {
+        "Int" => return "Int"
+        "Float" => return "Float"
+        "String" => return "String"
+        "Bool" => return "Bool"
+        "Any" => return "Any"
+        "Array" => return "[" + type_to_string(t.params[0]) + "]"
+        "Function" => {
+            let params = t.params.slice(0, t.params.len - 1)
+            let return_type = t.params[t.params.len - 1]
+            let param_str = params.map(p => type_to_string(p)).join(", ")
+            return "(" + param_str + ") -> " + type_to_string(return_type)
+        }
+        "Named" => {
+            if t.params.len > 0 {
+                return t.name + "<" + t.params.map(p => type_to_string(p)).join(", ") + ">"
+            }
+            return t.name
+        }
+        _ => return t.kind
+    }
+}
+
+fn ir_value_to_string(v: IRValue) -> string {
+    return v.kind + ":" + v.data
+}

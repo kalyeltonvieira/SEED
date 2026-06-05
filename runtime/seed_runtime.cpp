@@ -1807,7 +1807,7 @@ public:
     }
     
     string generate_cpp() {
-        string cpp = "#include \"seed_lib.hpp\"\n\n";
+        string cpp = "#include \"stdlib_stub.h\"\n\n";
         
         // Forward declarations of structs
         for (auto& pair : types) {

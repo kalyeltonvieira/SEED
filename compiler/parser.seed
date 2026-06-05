@@ -145,6 +145,19 @@ fn parse_function(p: Parser) -> ASTNode {
     let name = peek(p).lexeme
     advance(p)
     
+    // Parse type parameters for generics
+    let type_params = []
+    if peek(p).lexeme == "[" {
+        advance(p)
+        while peek(p).lexeme != "]" {
+            type_params.push(parse_type_param(p))
+            if peek(p).lexeme == "," {
+                advance(p)
+            }
+        }
+        expect(p, "]")
+    }
+    
     expect(p, "(")
     let params = parse_parameters(p)
     expect(p, ")")
@@ -155,15 +168,80 @@ fn parse_function(p: Parser) -> ASTNode {
         return_type = parse_type(p)
     }
     
+    // Parse where clause for type constraints
+    let constraints = []
+    if peek(p).lexeme == "where" {
+        advance(p)
+        constraints = parse_constraints(p)
+    }
+    
     let body = parse_block(p)
     
     return ASTNode {
         type: "Function",
         value: name,
-        children: [params, return_type, body],
+        children: [params, return_type, body, ASTNode {
+            type: "TypeParams",
+            value: null,
+            children: type_params,
+            line: start_line,
+            column: start_column
+        }, ASTNode {
+            type: "Constraints",
+            value: null,
+            children: constraints,
+            line: start_line,
+            column: start_column
+        }],
         line: start_line,
         column: start_column
     }
+}
+
+fn parse_type_param(p: Parser) -> ASTNode {
+    let start_line = peek(p).line
+    let start_column = peek(p).column
+    
+    let name = peek(p).lexeme
+    advance(p)
+    
+    let bound = null
+    if peek(p).lexeme == ":" {
+        advance(p)
+        bound = parse_type(p)
+    }
+    
+    return ASTNode {
+        type: "TypeParam",
+        value: name,
+        children: [bound],
+        line: start_line,
+        column: start_column
+    }
+}
+
+fn parse_constraints(p: Parser) -> [ASTNode] {
+    let constraints = []
+    
+    while peek(p).lexeme != "{" {
+        let left = parse_type(p)
+        expect(p, ":")
+        let right = parse_type(p)
+        
+        constraints.push(ASTNode {
+            type: "TypeConstraint",
+            value: null,
+            children: [left, right],
+            line: peek(p).line,
+            column: peek(p).column
+        })
+        
+        if peek(p).lexeme == "," {
+            advance(p)
+        }
+    }
+    
+    return constraints
 }
 
 fn parse_parameters(p: Parser) -> ASTNode {
@@ -243,6 +321,32 @@ fn parse_type(p: Parser) -> ASTNode {
             column: start_column
         }
     }
+    
+    // Parse union types (e.g., Int | String | Bool)
+    let first_type = parse_named_type(p)
+    let union_types = [first_type]
+    
+    while peek(p).lexeme == "|" {
+        advance(p)
+        union_types.push(parse_named_type(p))
+    }
+    
+    if union_types.len > 1 {
+        return ASTNode {
+            type: "UnionType",
+            value: null,
+            children: union_types,
+            line: start_line,
+            column: start_column
+        }
+    }
+    
+    return first_type
+}
+
+fn parse_named_type(p: Parser) -> ASTNode {
+    let start_line = peek(p).line
+    let start_column = peek(p).column
     
     let name = peek(p).lexeme
     advance(p)
@@ -885,6 +989,53 @@ fn parse_struct(p: Parser) -> ASTNode {
     let name = peek(p).lexeme
     advance(p)
     
+    // Parse type parameters for generic structs
+    let type_params = []
+    if peek(p).lexeme == "[" {
+        advance(p)
+        while peek(p).lexeme != "]" {
+            type_params.push(parse_type_param(p))
+            if peek(p).lexeme == "," {
+                advance(p)
+            }
+        }
+        expect(p, "]")
+    }
+    
+    // Parse trait implementations
+    let trait_impls = []
+    if peek(p).lexeme == ":" {
+        advance(p)
+        while peek(p).lexeme != "{" {
+            let trait_name = peek(p).lexeme
+            advance(p)
+            
+            let trait_args = []
+            if peek(p).lexeme == "[" {
+                advance(p)
+                while peek(p).lexeme != "]" {
+                    trait_args.push(parse_type(p))
+                    if peek(p).lexeme == "," {
+                        advance(p)
+                    }
+                }
+                expect(p, "]")
+            }
+            
+            trait_impls.push(ASTNode {
+                type: "TraitImpl",
+                value: trait_name,
+                children: trait_args,
+                line: start_line,
+                column: start_column
+            })
+            
+            if peek(p).lexeme == "+" {
+                advance(p)
+            }
+        }
+    }
+    
     expect(p, "{")
     
     let fields = []
@@ -912,7 +1063,19 @@ fn parse_struct(p: Parser) -> ASTNode {
     return ASTNode {
         type: "StructDeclaration",
         value: name,
-        children: fields,
+        children: [ASTNode {
+            type: "TypeParams",
+            value: null,
+            children: type_params,
+            line: start_line,
+            column: start_column
+        }, ASTNode {
+            type: "TraitImpls",
+            value: null,
+            children: trait_impls,
+            line: start_line,
+            column: start_column
+        }] + fields,
         line: start_line,
         column: start_column
     }
@@ -960,6 +1123,172 @@ fn parse_enum(p: Parser) -> ASTNode {
         type: "EnumDeclaration",
         value: name,
         children: variants,
+        line: start_line,
+        column: start_column
+    }
+}
+
+fn parse_trait(p: Parser) -> ASTNode {
+    let start_line = peek(p).line
+    let start_column = peek(p).column
+    
+    advance(p) // Skip 'trait'
+    
+    let name = peek(p).lexeme
+    advance(p)
+    
+    // Parse type parameters for generic traits
+    let type_params = []
+    if peek(p).lexeme == "[" {
+        advance(p)
+        while peek(p).lexeme != "]" {
+            type_params.push(parse_type_param(p))
+            if peek(p).lexeme == "," {
+                advance(p)
+            }
+        }
+        expect(p, "]")
+    }
+    
+    // Parse trait bounds (supertraits)
+    let bounds = []
+    if peek(p).lexeme == ":" {
+        advance(p)
+        while peek(p).lexeme != "{" {
+            bounds.push(parse_type(p))
+            if peek(p).lexeme == "+" {
+                advance(p)
+            }
+        }
+    }
+    
+    expect(p, "{")
+    
+    let methods = []
+    while peek(p).lexeme != "}" {
+        methods.push(parse_trait_method(p))
+        
+        if peek(p).lexeme == "," {
+            advance(p)
+        }
+    }
+    
+    expect(p, "}")
+    
+    return ASTNode {
+        type: "TraitDeclaration",
+        value: name,
+        children: [ASTNode {
+            type: "TypeParams",
+            value: null,
+            children: type_params,
+            line: start_line,
+            column: start_column
+        }, ASTNode {
+            type: "TraitBounds",
+            value: null,
+            children: bounds,
+            line: start_line,
+            column: start_column
+        }] + methods,
+        line: start_line,
+        column: start_column
+    }
+}
+
+fn parse_trait_method(p: Parser) -> ASTNode {
+    let start_line = peek(p).line
+    let start_column = peek(p).column
+    
+    let name = peek(p).lexeme
+    advance(p)
+    
+    expect(p, "(")
+    let params = parse_parameters(p)
+    expect(p, ")")
+    
+    let return_type = null
+    if peek(p).lexeme == "->" {
+        advance(p)
+        return_type = parse_type(p)
+    }
+    
+    return ASTNode {
+        type: "TraitMethod",
+        value: name,
+        children: [params, return_type],
+        line: start_line,
+        column: start_column
+    }
+}
+
+fn parse_impl(p: Parser) -> ASTNode {
+    let start_line = peek(p).line
+    let start_column = peek(p).column
+    
+    advance(p) // Skip 'impl'
+    
+    let trait_name = peek(p).lexeme
+    advance(p)
+    
+    let trait_args = []
+    if peek(p).lexeme == "[" {
+        advance(p)
+        while peek(p).lexeme != "]" {
+            trait_args.push(parse_type(p))
+            if peek(p).lexeme == "," {
+                advance(p)
+            }
+        }
+        expect(p, "]")
+    }
+    
+    expect(p, "for")
+    
+    let type_name = peek(p).lexeme
+    advance(p)
+    
+    let type_args = []
+    if peek(p).lexeme == "[" {
+        advance(p)
+        while peek(p).lexeme != "]" {
+            type_args.push(parse_type(p))
+            if peek(p).lexeme == "," {
+                advance(p)
+            }
+        }
+        expect(p, "]")
+    }
+    
+    expect(p, "{")
+    
+    let methods = []
+    while peek(p).lexeme != "}" {
+        methods.push(parse_function(p))
+        
+        if peek(p).lexeme == "," {
+            advance(p)
+        }
+    }
+    
+    expect(p, "}")
+    
+    return ASTNode {
+        type: "ImplBlock",
+        value: null,
+        children: [ASTNode {
+            type: "TraitRef",
+            value: trait_name,
+            children: trait_args,
+            line: start_line,
+            column: start_column
+        }, ASTNode {
+            type: "TypeRef",
+            value: type_name,
+            children: type_args,
+            line: start_line,
+            column: start_column
+        }] + methods,
         line: start_line,
         column: start_column
     }
