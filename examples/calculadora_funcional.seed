@@ -1,0 +1,72 @@
+module calculadora_funcional
+
+import stdlib.io
+
+/// Calculadora SEED que realmente funciona
+/// Este exemplo usa apenas o que o transpiler 0.3 suporta
+
+data Resultado {
+    Soma(Float)
+    Subtracao(Float)
+    Multiplicacao(Float)
+    Divisao(Float)
+    Erro(String)
+}
+
+fn calcular(a: Float, op: String, b: Float) -> Resultado {
+    match op {
+        "+" => Soma(a + b)
+        "-" => Subtracao(a - b)
+        "*" => Multiplicacao(a * b)
+        "/" => {
+            if b == 0.0 {
+                Erro("Divisão por zero")
+            } else {
+                Divisao(a / b)
+            }
+        }
+        _ => Erro("Operador desconhecido")
+    }
+}
+
+fn exibir_resultado(res: Resultado) -> String {
+    match res {
+        Soma(valor) => "Soma: " + to_string(valor)
+        Subtracao(valor) => "Subtração: " + to_string(valor)
+        Multiplicacao(valor) => "Multiplicação: " + to_string(valor)
+        Divisao(valor) => "Divisão: " + to_string(valor)
+        Erro(msg) => "Erro: " + msg
+    }
+}
+
+fn main() effect io -> Result[Unit, String] {
+    io.println("╔═══════════════════════════════╗")
+    io.println("║   Calculadora SEED 0.3        ║")
+    io.println("╚═══════════════════════════════╝")
+    io.println("")
+    
+    // Exemplo 1
+    let res1 = calcular(5.0, "+", 3.0)
+    io.println(exibir_resultado(res1))
+    
+    // Exemplo 2
+    let res2 = calcular(10.0, "-", 4.0)
+    io.println(exibir_resultado(res2))
+    
+    // Exemplo 3
+    let res3 = calcular(7.0, "*", 6.0)
+    io.println(exibir_resultado(res3))
+    
+    // Exemplo 4
+    let res4 = calcular(20.0, "/", 4.0)
+    io.println(exibir_resultado(res4))
+    
+    // Exemplo 5 - Erro
+    let res5 = calcular(10.0, "/", 0.0)
+    io.println(exibir_resultado(res5))
+    
+    io.println("")
+    io.println("✓ Cálculos completados!")
+    
+    return Ok(Unit)
+}

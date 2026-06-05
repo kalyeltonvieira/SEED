@@ -1,0 +1,26 @@
+module calculadora_simples
+
+import stdlib.io
+
+/// Calculadora básica que compila e funciona
+fn main() effect io -> Result[Unit, String] {
+    io.println("=== Calculadora SEED ===")
+    io.println("Soma: 5 + 3")
+    
+    let a = 5.0
+    let b = 3.0
+    
+    let soma = a + b
+    io.println("5 + 3 = " + soma.to_string())
+    
+    let subtracao = a - b
+    io.println("5 - 3 = " + subtracao.to_string())
+    
+    let multiplicacao = a * b
+    io.println("5 * 3 = " + multiplicacao.to_string())
+    
+    let divisao = a / b
+    io.println("5 / 3 = " + divisao.to_string())
+    
+    return Ok(Unit)
+}
