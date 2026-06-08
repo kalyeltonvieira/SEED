@@ -1,10 +1,15 @@
 module compiler.ir
 
 import compiler.parser
+import compiler.error_reporter
 
-/// Intermediate Representation (IR) para SEED
+/// Intermediate Representation (IR) para SEED — versão 0.4
 /// Representação intermediária entre AST e codegen
-/// Permite otimizações independentes da arquitetura alvo
+/// Suporte completo a SSA, Union types, Generics/Monomorphization, Closures e FFI
+
+// ─────────────────────────────────────────────
+// Tipos base (estendidos em 0.4)
+// ─────────────────────────────────────────────
 
 type IRInstruction = {
     id: int
@@ -13,6 +18,10 @@ type IRInstruction = {
     result: Option[IRValue]
     line: int
     column: int
+    // Campos novos em 0.4:
+    ffi_wasm: bool          // para OP_CALL de extern wasm
+    ffi_js: bool            // para OP_CALL de extern js
+    debug_name: string      // nome legível para disassembly
 }
 
 type IROpcode = {
@@ -31,9 +40,14 @@ type IRValue = {
 }
 
 type Type = {
-    kind: string
+    kind: string    // "Int"|"Float"|"String"|"Bool"|"Null"|"Unit"|"Any"|
+                    // "TypeVar"|"Function"|"Array"|"Union"|"Named"|
+                    // "Generic"|"Trait"|"Ref"|"RefMut"|"Ptr"
     name: string
     params: [Type]
+    // Campos novos em 0.4:
+    is_owned: bool          // para o ownership checker
+    trait_bounds: [string]  // para type params com bounds
 }
 
 type IRBlock = {
@@ -74,43 +88,1406 @@ type IRContext = {
     current_block: Option[string]
     value_counter: int
     block_counter: int
+    diagnostics: [Diagnostic]
+    debug_mode: bool
 }
 
-// Opcodes IR
-const OP_CONST = IROpcode { name: "const", kind: "value" }
-const OP_LOAD = IROpcode { name: "load", kind: "memory" }
-const OP_STORE = IROpcode { name: "store", kind: "memory" }
-const OP_ADD = IROpcode { name: "add", kind: "arithmetic" }
-const OP_SUB = IROpcode { name: "sub", kind: "arithmetic" }
-const OP_MUL = IROpcode { name: "mul", kind: "arithmetic" }
-const OP_DIV = IROpcode { name: "div", kind: "arithmetic" }
-const OP_MOD = IROpcode { name: "mod", kind: "arithmetic" }
-const OP_NEG = IROpcode { name: "neg", kind: "arithmetic" }
-const OP_EQ = IROpcode { name: "eq", kind: "comparison" }
-const OP_NEQ = IROpcode { name: "neq", kind: "comparison" }
-const OP_LT = IROpcode { name: "lt", kind: "comparison" }
-const OP_GT = IROpcode { name: "gt", kind: "comparison" }
-const OP_LTE = IROpcode { name: "lte", kind: "comparison" }
-const OP_GTE = IROpcode { name: "gte", kind: "comparison" }
-const OP_AND = IROpcode { name: "and", kind: "logical" }
-const OP_OR = IROpcode { name: "or", kind: "logical" }
-const OP_NOT = IROpcode { name: "not", kind: "logical" }
-const OP_CALL = IROpcode { name: "call", kind: "control" }
-const OP_RET = IROpcode { name: "ret", kind: "control" }
-const OP_JMP = IROpcode { name: "jmp", kind: "control" }
-const OP_JZ = IROpcode { name: "jz", kind: "control" }
-const OP_JNZ = IROpcode { name: "jnz", kind: "control" }
-const OP_PHI = IROpcode { name: "phi", kind: "ssa" }
-const OP_CAST = IROpcode { name: "cast", kind: "conversion" }
-const OP_ALLOC = IROpcode { name: "alloc", kind: "memory" }
-const OP_FREE = IROpcode { name: "free", kind: "memory" }
-const OP_GET_FIELD = IROpcode { name: "get_field", kind: "aggregate" }
-const OP_SET_FIELD = IROpcode { name: "set_field", kind: "aggregate" }
-const OP_GET_ELEM = IROpcode { name: "get_elem", kind: "aggregate" }
-const OP_SET_ELEM = IROpcode { name: "set_elem", kind: "aggregate" }
-const OP_LEN = IROpcode { name: "len", kind: "aggregate" }
-const OP_MAKE_CLOSURE = IROpcode { name: "make_closure", kind: "closure" }
-const OP_CAPTURE = IROpcode { name: "capture", kind: "closure" }
+// ─────────────────────────────────────────────
+// Opcodes IR (existentes + novos em 0.4)
+// ─────────────────────────────────────────────
+
+const OP_CONST       = IROpcode { name: "const",       kind: "value"      }
+const OP_LOAD        = IROpcode { name: "load",        kind: "memory"     }
+const OP_STORE       = IROpcode { name: "store",       kind: "memory"     }
+const OP_ADD         = IROpcode { name: "add",         kind: "arithmetic" }
+const OP_SUB         = IROpcode { name: "sub",         kind: "arithmetic" }
+const OP_MUL         = IROpcode { name: "mul",         kind: "arithmetic" }
+const OP_DIV         = IROpcode { name: "div",         kind: "arithmetic" }
+const OP_MOD         = IROpcode { name: "mod",         kind: "arithmetic" }
+const OP_NEG         = IROpcode { name: "neg",         kind: "arithmetic" }
+const OP_EQ          = IROpcode { name: "eq",          kind: "comparison" }
+const OP_NEQ         = IROpcode { name: "neq",         kind: "comparison" }
+const OP_LT          = IROpcode { name: "lt",          kind: "comparison" }
+const OP_GT          = IROpcode { name: "gt",          kind: "comparison" }
+const OP_LTE         = IROpcode { name: "lte",         kind: "comparison" }
+const OP_GTE         = IROpcode { name: "gte",         kind: "comparison" }
+const OP_AND         = IROpcode { name: "and",         kind: "logical"    }
+const OP_OR          = IROpcode { name: "or",          kind: "logical"    }
+const OP_NOT         = IROpcode { name: "not",         kind: "logical"    }
+const OP_CALL        = IROpcode { name: "call",        kind: "control"    }
+const OP_RET         = IROpcode { name: "ret",         kind: "control"    }
+const OP_JMP         = IROpcode { name: "jmp",         kind: "control"    }
+const OP_JZ          = IROpcode { name: "jz",          kind: "control"    }
+const OP_JNZ         = IROpcode { name: "jnz",         kind: "control"    }
+const OP_PHI         = IROpcode { name: "phi",         kind: "ssa"        }
+const OP_CAST        = IROpcode { name: "cast",        kind: "conversion" }
+const OP_ALLOC       = IROpcode { name: "alloc",       kind: "memory"     }
+const OP_FREE        = IROpcode { name: "free",        kind: "memory"     }
+const OP_GET_FIELD   = IROpcode { name: "get_field",   kind: "aggregate"  }
+const OP_SET_FIELD   = IROpcode { name: "set_field",   kind: "aggregate"  }
+const OP_GET_ELEM    = IROpcode { name: "get_elem",    kind: "aggregate"  }
+const OP_SET_ELEM    = IROpcode { name: "set_elem",    kind: "aggregate"  }
+const OP_LEN         = IROpcode { name: "len",         kind: "aggregate"  }
+const OP_MAKE_CLOSURE = IROpcode { name: "make_closure", kind: "closure"  }
+const OP_CAPTURE     = IROpcode { name: "capture",     kind: "closure"    }
+// Novos opcodes em 0.4:
+const OP_UNION_TAG   = IROpcode { name: "union_tag",   kind: "union"      }
+const OP_UNION_ACCESS = IROpcode { name: "union_access", kind: "union"    }
+
+// ─────────────────────────────────────────────
+// SSABuilder — construção da forma SSA
+// ─────────────────────────────────────────────
+
+type SSABuilder = {
+    dominators: dict        // bloco -> conjunto de dominadores (lista de labels)
+    dom_frontier: dict      // bloco -> fronteira de dominância (lista de labels)
+    phi_nodes: dict         // bloco -> [IRValue que precisam de PHI]
+    defs: dict              // IRValue.data -> [bloco onde é definido]
+}
+
+/// Constrói a forma SSA de uma função: calcula dominadores, fronteiras,
+/// insere PHI nodes e renomeia os valores.
+fn build_ssa(ctx: IRContext, func: IRFunction) -> IRFunction {
+    let builder = SSABuilder {
+        dominators:  dict(),
+        dom_frontier: dict(),
+        phi_nodes:   dict(),
+        defs:        dict()
+    }
+
+    let dominators = compute_dominators(func)
+    builder.dominators = dominators
+
+    let df = compute_dom_frontier(func, dominators)
+    builder.dom_frontier = df
+
+    // Coleta definições existentes por valor
+    for block_label in func.blocks.keys() {
+        let block = func.blocks[block_label]
+        for instr in block.instructions {
+            match instr.result {
+                Option[IRValue].Some(v) => {
+                    if !builder.defs.has(v.data) {
+                        builder.defs[v.data] = []
+                    }
+                    builder.defs[v.data].push(block_label)
+                }
+                Option[IRValue].None => {}
+            }
+        }
+    }
+
+    let func_with_phi = insert_phi_nodes(builder, func)
+    let func_ssa = rename_values(builder, func_with_phi)
+    return func_ssa
+}
+
+/// Insere nós PHI nos pontos de convergência do CFG para cada valor
+/// definido em múltiplos blocos.
+fn insert_phi_nodes(builder: SSABuilder, func: IRFunction) -> IRFunction {
+    for val_name in builder.defs.keys() {
+        let def_blocks = builder.defs[val_name]
+        if def_blocks.len <= 1 {
+            continue
+        }
+
+        // Conjunto de blocos onde PHI é necessário
+        let worklist = def_blocks.copy()
+        let phi_inserted = dict()
+
+        while worklist.len > 0 {
+            let b = worklist[0]
+            worklist = worklist.slice(1, worklist.len)
+
+            if !builder.dom_frontier.has(b) {
+                continue
+            }
+
+            let frontier = builder.dom_frontier[b]
+            for df_block in frontier {
+                if phi_inserted.has(df_block) {
+                    continue
+                }
+                phi_inserted[df_block] = true
+
+                // Cria instrução PHI no início do bloco
+                let phi_val = IRValue { kind: "phi", data: val_name + "_phi_" + df_block }
+                let phi_instr = IRInstruction {
+                    id: -1,
+                    opcode: OP_PHI,
+                    operands: [],
+                    result: Option[IRValue].Some(phi_val),
+                    line: 0,
+                    column: 0,
+                    ffi_wasm: false,
+                    ffi_js: false,
+                    debug_name: "phi." + val_name
+                }
+
+                let block = func.blocks[df_block]
+                block.instructions = [phi_instr] + block.instructions
+
+                // Adiciona df_block à worklist se ainda não estava nos defs
+                if !worklist.contains(df_block) {
+                    worklist.push(df_block)
+                }
+            }
+        }
+    }
+
+    return func
+}
+
+/// Renomeia IRValues para garantir definição única (propriedade SSA).
+/// Cada definição recebe sufixo de versão único.
+fn rename_values(builder: SSABuilder, func: IRFunction) -> IRFunction {
+    let version_counter = dict()   // val_name -> int
+    let rename_stack = dict()      // val_name -> [versioned_name]
+
+    fn get_version(name: string) -> int {
+        if !version_counter.has(name) {
+            version_counter[name] = 0
+        }
+        return version_counter[name]
+    }
+
+    fn new_version(name: string) -> string {
+        let v = get_version(name)
+        version_counter[name] = v + 1
+        let versioned = name + "_v" + v.to_string()
+        if !rename_stack.has(name) {
+            rename_stack[name] = []
+        }
+        rename_stack[name].push(versioned)
+        return versioned
+    }
+
+    fn current_name(name: string) -> string {
+        if !rename_stack.has(name) || rename_stack[name].len == 0 {
+            return name
+        }
+        let stack = rename_stack[name]
+        return stack[stack.len - 1]
+    }
+
+    // Renomeia em ordem de dominância (entry block primeiro)
+    rename_block(func, func.entry_block, rename_stack, version_counter)
+
+    return func
+}
+
+fn rename_block(func: IRFunction, block_label: string, rename_stack: dict, version_counter: dict) {
+    if !func.blocks.has(block_label) {
+        return
+    }
+    let block = func.blocks[block_label]
+    let new_instructions = []
+
+    for instr in block.instructions {
+        // Renomeia usos de operandos
+        let new_operands = []
+        for op in instr.operands {
+            let val = op.value
+            if val.kind == "identifier" || val.kind == "phi" || val.kind == "const" ||
+               val.kind == "binop" || val.kind == "call" || val.kind == "field" {
+                let renamed_data = if rename_stack.has(val.data) && rename_stack[val.data].len > 0 {
+                    let stack = rename_stack[val.data]
+                    stack[stack.len - 1]
+                } else {
+                    val.data
+                }
+                new_operands.push(IROperand {
+                    value: IRValue { kind: val.kind, data: renamed_data },
+                    type: op.type
+                })
+            } else {
+                new_operands.push(op)
+            }
+        }
+
+        // Renomeia resultado (definição)
+        let new_result = match instr.result {
+            Option[IRValue].Some(v) => {
+                if v.kind == "phi" {
+                    // PHI nodes mantêm nome especial
+                    Option[IRValue].Some(v)
+                } else {
+                    let vname = v.data
+                    if !version_counter.has(vname) {
+                        version_counter[vname] = 0
+                    }
+                    let ver = version_counter[vname]
+                    version_counter[vname] = ver + 1
+                    let versioned = vname + "_v" + ver.to_string()
+                    if !rename_stack.has(vname) {
+                        rename_stack[vname] = []
+                    }
+                    rename_stack[vname].push(versioned)
+                    Option[IRValue].Some(IRValue { kind: v.kind, data: versioned })
+                }
+            }
+            Option[IRValue].None => Option[IRValue].None
+        }
+
+        new_instructions.push(IRInstruction {
+            id: instr.id,
+            opcode: instr.opcode,
+            operands: new_operands,
+            result: new_result,
+            line: instr.line,
+            column: instr.column,
+            ffi_wasm: instr.ffi_wasm,
+            ffi_js: instr.ffi_js,
+            debug_name: instr.debug_name
+        })
+    }
+
+    block.instructions = new_instructions
+}
+
+/// Calcula o conjunto de dominadores para cada bloco do CFG.
+/// Retorna dict: block_label -> [lista de labels de dominadores]
+fn compute_dominators(func: IRFunction) -> dict {
+    let all_blocks = func.blocks.keys()
+    let doms = dict()
+
+    // Inicializa: cada bloco domina a si mesmo; entry só é dominado por si
+    for b in all_blocks {
+        if b == func.entry_block {
+            doms[b] = [b]
+        } else {
+            doms[b] = all_blocks.copy()
+        }
+    }
+
+    // Algoritmo iterativo de dominadores
+    let changed = true
+    while changed {
+        changed = false
+        for b in all_blocks {
+            if b == func.entry_block {
+                continue
+            }
+            let block = func.blocks[b]
+            // new_dom = {b} ∪ (⋂ dom[p] para p ∈ predecessors)
+            let new_dom = [b]
+            let first_pred = true
+            for pred in block.predecessors {
+                if !doms.has(pred) {
+                    continue
+                }
+                let pred_dom = doms[pred]
+                if first_pred {
+                    for d in pred_dom {
+                        new_dom.push(d)
+                    }
+                    first_pred = false
+                } else {
+                    // Intersecção
+                    let intersection = []
+                    for d in new_dom {
+                        if pred_dom.contains(d) {
+                            intersection.push(d)
+                        }
+                    }
+                    new_dom = intersection
+                    // Garante que b está sempre no conjunto
+                    if !new_dom.contains(b) {
+                        new_dom.push(b)
+                    }
+                }
+            }
+
+            // Verifica se mudou
+            let old_dom = doms[b]
+            if old_dom.len != new_dom.len {
+                changed = true
+                doms[b] = new_dom
+            } else {
+                let same = true
+                for d in new_dom {
+                    if !old_dom.contains(d) {
+                        same = false
+                        break
+                    }
+                }
+                if !same {
+                    changed = true
+                    doms[b] = new_dom
+                }
+            }
+        }
+    }
+
+    return doms
+}
+
+/// Calcula a fronteira de dominância para cada bloco.
+/// Retorna dict: block_label -> [lista de labels na fronteira]
+fn compute_dom_frontier(func: IRFunction, dominators: dict) -> dict {
+    let df = dict()
+    let all_blocks = func.blocks.keys()
+
+    for b in all_blocks {
+        df[b] = []
+    }
+
+    for b in all_blocks {
+        let block = func.blocks[b]
+        if block.predecessors.len < 2 {
+            continue
+        }
+        for pred in block.predecessors {
+            let runner = pred
+            // Sobe na árvore de dominadores até o dominador imediato de b
+            while runner != "" && runner != idom(b, dominators) {
+                if !df[runner].contains(b) {
+                    df[runner].push(b)
+                }
+                runner = idom(runner, dominators)
+            }
+        }
+    }
+
+    return df
+}
+
+/// Retorna o dominador imediato de um bloco (o dominador mais próximo, exceto ele mesmo).
+fn idom(block_label: string, dominators: dict) -> string {
+    if !dominators.has(block_label) {
+        return ""
+    }
+    let doms = dominators[block_label]
+    // Dominador imediato = dominador mais distante exceto o próprio bloco
+    // Heurística: o último na lista que não seja o próprio bloco
+    let result = ""
+    for d in doms {
+        if d != block_label {
+            result = d
+        }
+    }
+    return result
+}
+
+// ─────────────────────────────────────────────
+// MonomorphizationCache — deduplicação de instâncias genéricas
+// ─────────────────────────────────────────────
+
+type MonomorphizationCache = {
+    instances: dict   // "nome__T1__T2" -> IRFunction
+}
+
+fn new_mono_cache() -> MonomorphizationCache {
+    return MonomorphizationCache { instances: dict() }
+}
+
+/// Monomorfa uma função genérica com os type arguments concretos fornecidos.
+/// Reutiliza instância existente se disponível (sem duplicação).
+fn monomorphize(ctx: IRContext, cache: MonomorphizationCache, generic_func: IRFunction, type_args: [Type]) -> IRFunction {
+    let mangled = mangle_name(generic_func.name, type_args)
+
+    // Reutiliza instância existente (requisito 3.6)
+    if cache.instances.has(mangled) {
+        return cache.instances[mangled]
+    }
+
+    // Constrói mapa de substituição
+    let type_map = dict()
+    for i in 0..generic_func.params.len {
+        let param = generic_func.params[i]
+        if param.type.kind == "TypeVar" && i < type_args.len {
+            type_map[param.type.name] = type_args[i]
+        }
+    }
+
+    // Substitui os type vars na função
+    let mono_func = substitute_type_vars(generic_func, type_map)
+    let renamed_func = IRFunction {
+        name: mangled,
+        params: mono_func.params,
+        return_type: mono_func.return_type,
+        blocks: mono_func.blocks,
+        entry_block: mono_func.entry_block
+    }
+
+    // Registra no módulo e no cache
+    ctx.module.functions[mangled] = renamed_func
+    cache.instances[mangled] = renamed_func
+
+    return renamed_func
+}
+
+/// Gera o nome mangled para uma instância monomorfa.
+/// Exemplo: "identidade" com [Int, String] → "identidade__Int__String"
+fn mangle_name(base_name: string, type_args: [Type]) -> string {
+    if type_args.len == 0 {
+        return base_name
+    }
+    let parts = [base_name]
+    for t in type_args {
+        parts.push(type_to_mangle_string(t))
+    }
+    return parts.join("__")
+}
+
+fn type_to_mangle_string(t: Type) -> string {
+    match t.kind {
+        "Named"    => return t.name
+        "Int"      => return "Int"
+        "Float"    => return "Float"
+        "String"   => return "String"
+        "Bool"     => return "Bool"
+        "Unit"     => return "Unit"
+        "Any"      => return "Any"
+        "TypeVar"  => return t.name
+        "Array"    => {
+            if t.params.len > 0 {
+                return "Array_" + type_to_mangle_string(t.params[0])
+            }
+            return "Array"
+        }
+        "Function" => {
+            let param_strs = []
+            for p in t.params {
+                param_strs.push(type_to_mangle_string(p))
+            }
+            return "Fn_" + param_strs.join("_")
+        }
+        _ => return t.name
+    }
+}
+
+/// Substitui TypeVars numa IRFunction de acordo com o mapa fornecido.
+fn substitute_type_vars(func: IRFunction, type_map: dict) -> IRFunction {
+    let new_params = []
+    for p in func.params {
+        new_params.push(IRParam {
+            name: p.name,
+            type: substitute_type(p.type, type_map)
+        })
+    }
+
+    let new_return_type = substitute_type(func.return_type, type_map)
+
+    let new_blocks = dict()
+    for block_label in func.blocks.keys() {
+        let block = func.blocks[block_label]
+        let new_instrs = []
+        for instr in block.instructions {
+            let new_operands = []
+            for op in instr.operands {
+                new_operands.push(IROperand {
+                    value: op.value,
+                    type: substitute_type(op.type, type_map)
+                })
+            }
+            new_instrs.push(IRInstruction {
+                id: instr.id,
+                opcode: instr.opcode,
+                operands: new_operands,
+                result: instr.result,
+                line: instr.line,
+                column: instr.column,
+                ffi_wasm: instr.ffi_wasm,
+                ffi_js: instr.ffi_js,
+                debug_name: instr.debug_name
+            })
+        }
+        new_blocks[block_label] = IRBlock {
+            label: block.label,
+            instructions: new_instrs,
+            predecessors: block.predecessors,
+            successors: block.successors
+        }
+    }
+
+    return IRFunction {
+        name: func.name,
+        params: new_params,
+        return_type: new_return_type,
+        blocks: new_blocks,
+        entry_block: func.entry_block
+    }
+}
+
+fn substitute_type(t: Type, type_map: dict) -> Type {
+    if t.kind == "TypeVar" && type_map.has(t.name) {
+        return type_map[t.name]
+    }
+    let new_params = []
+    for p in t.params {
+        new_params.push(substitute_type(p, type_map))
+    }
+    return Type {
+        kind: t.kind,
+        name: t.name,
+        params: new_params,
+        is_owned: t.is_owned,
+        trait_bounds: t.trait_bounds
+    }
+}
+
+// ─────────────────────────────────────────────
+// Serialização / Desserialização do IRModule
+// ─────────────────────────────────────────────
+
+/// Serializa um IRModule para JSON compacto (para round-trip e cache).
+/// Requisito: 1.9
+fn serialize_ir_module(module: IRModule) -> string {
+    let functions_json = serialize_functions(module.functions)
+    let globals_json   = serialize_globals(module.globals)
+    let constants_json = serialize_constants(module.constants)
+
+    return "{" +
+        "\"name\":"      + json_str(module.name) + "," +
+        "\"functions\":" + functions_json         + "," +
+        "\"globals\":"   + globals_json           + "," +
+        "\"constants\":" + constants_json         +
+    "}"
+}
+
+fn serialize_functions(functions: dict) -> string {
+    let entries = []
+    for fname in functions.keys() {
+        let f = functions[fname]
+        entries.push(json_str(fname) + ":" + serialize_function(f))
+    }
+    return "{" + entries.join(",") + "}"
+}
+
+fn serialize_function(f: IRFunction) -> string {
+    let params_json = "["
+    let param_parts = []
+    for p in f.params {
+        param_parts.push("{\"name\":" + json_str(p.name) + ",\"type\":" + serialize_type(p.type) + "}")
+    }
+    params_json = params_json + param_parts.join(",") + "]"
+
+    let blocks_json = serialize_blocks(f.blocks)
+
+    return "{" +
+        "\"name\":"        + json_str(f.name)        + "," +
+        "\"params\":"      + params_json              + "," +
+        "\"return_type\":" + serialize_type(f.return_type) + "," +
+        "\"entry_block\":" + json_str(f.entry_block)  + "," +
+        "\"blocks\":"      + blocks_json              +
+    "}"
+}
+
+fn serialize_blocks(blocks: dict) -> string {
+    let entries = []
+    for label in blocks.keys() {
+        let block = blocks[label]
+        entries.push(json_str(label) + ":" + serialize_block(block))
+    }
+    return "{" + entries.join(",") + "}"
+}
+
+fn serialize_block(block: IRBlock) -> string {
+    let instrs_json = "["
+    let instr_parts = []
+    for instr in block.instructions {
+        instr_parts.push(serialize_instruction(instr))
+    }
+    instrs_json = instrs_json + instr_parts.join(",") + "]"
+
+    let preds_json = "[" + block.predecessors.map(p => json_str(p)).join(",") + "]"
+    let succs_json = "[" + block.successors.map(s => json_str(s)).join(",") + "]"
+
+    return "{" +
+        "\"label\":"        + json_str(block.label) + "," +
+        "\"instructions\":" + instrs_json           + "," +
+        "\"predecessors\":" + preds_json            + "," +
+        "\"successors\":"   + succs_json            +
+    "}"
+}
+
+fn serialize_instruction(instr: IRInstruction) -> string {
+    let operands_json = "[" + instr.operands.map(o => serialize_operand(o)).join(",") + "]"
+    let result_json = match instr.result {
+        Option[IRValue].Some(v) => serialize_ir_value(v)
+        Option[IRValue].None    => "null"
+    }
+
+    return "{" +
+        "\"id\":"         + instr.id.to_string() + "," +
+        "\"opcode\":"     + serialize_opcode(instr.opcode) + "," +
+        "\"operands\":"   + operands_json        + "," +
+        "\"result\":"     + result_json          + "," +
+        "\"line\":"       + instr.line.to_string() + "," +
+        "\"column\":"     + instr.column.to_string() + "," +
+        "\"ffi_wasm\":"   + instr.ffi_wasm.to_string() + "," +
+        "\"ffi_js\":"     + instr.ffi_js.to_string()  + "," +
+        "\"debug_name\":" + json_str(instr.debug_name) +
+    "}"
+}
+
+fn serialize_operand(op: IROperand) -> string {
+    return "{\"value\":" + serialize_ir_value(op.value) + ",\"type\":" + serialize_type(op.type) + "}"
+}
+
+fn serialize_ir_value(v: IRValue) -> string {
+    return "{\"kind\":" + json_str(v.kind) + ",\"data\":" + json_str(v.data) + "}"
+}
+
+fn serialize_opcode(op: IROpcode) -> string {
+    return "{\"name\":" + json_str(op.name) + ",\"kind\":" + json_str(op.kind) + "}"
+}
+
+fn serialize_type(t: Type) -> string {
+    let params_json = "[" + t.params.map(p => serialize_type(p)).join(",") + "]"
+    let bounds_json = "[" + t.trait_bounds.map(b => json_str(b)).join(",") + "]"
+    return "{" +
+        "\"kind\":"         + json_str(t.kind)   + "," +
+        "\"name\":"         + json_str(t.name)   + "," +
+        "\"params\":"       + params_json        + "," +
+        "\"is_owned\":"     + t.is_owned.to_string() + "," +
+        "\"trait_bounds\":" + bounds_json        +
+    "}"
+}
+
+fn serialize_globals(globals: dict) -> string {
+    let entries = []
+    for gname in globals.keys() {
+        let v = globals[gname]
+        entries.push(json_str(gname) + ":" + serialize_ir_value(v))
+    }
+    return "{" + entries.join(",") + "}"
+}
+
+fn serialize_constants(constants: [IRConstant]) -> string {
+    let parts = []
+    for c in constants {
+        parts.push("{\"value\":" + json_str(c.value.to_string()) + ",\"type\":" + serialize_type(c.type) + "}")
+    }
+    return "[" + parts.join(",") + "]"
+}
+
+fn json_str(s: string) -> string {
+    let result = ""
+    for i in 0..s.len {
+        let ch = s.char_at(i)
+        if ch == "\"" {
+            result = result + "\\\""
+        } else if ch == "\\" {
+            result = result + "\\\\"
+        } else if ch == "\n" {
+            result = result + "\\n"
+        } else if ch == "\r" {
+            result = result + "\\r"
+        } else if ch == "\t" {
+            result = result + "\\t"
+        } else {
+            result = result + ch
+        }
+    }
+    return "\"" + result + "\""
+}
+
+/// Desserializa um IRModule a partir de JSON (produzido por serialize_ir_module).
+/// Requisito: 1.9
+fn deserialize_ir_module(data: string) -> IRModule {
+    let name     = deser_json_string(data, "name")
+    let funcs    = deser_functions(deser_json_object(data, "functions"))
+    let globals  = deser_globals(deser_json_object(data, "globals"))
+    let consts   = deser_constants(deser_json_array_str(data, "constants"))
+
+    return IRModule {
+        name:      name,
+        functions: funcs,
+        globals:   globals,
+        constants: consts
+    }
+}
+
+fn deser_functions(obj_str: string) -> dict {
+    let result = dict()
+    if obj_str == null || obj_str == "{}" {
+        return result
+    }
+    let entries = deser_object_entries(obj_str)
+    for entry in entries {
+        let fname = entry[0]
+        let fval  = entry[1]
+        result[fname] = deser_function(fval)
+    }
+    return result
+}
+
+fn deser_function(s: string) -> IRFunction {
+    let name = deser_json_string(s, "name")
+    let entry_block = deser_json_string(s, "entry_block")
+    let return_type = deser_type(deser_json_object(s, "return_type"))
+    let params = deser_params(deser_json_array_str(s, "params"))
+    let blocks = deser_blocks(deser_json_object(s, "blocks"))
+
+    return IRFunction {
+        name:         name,
+        params:       params,
+        return_type:  return_type,
+        blocks:       blocks,
+        entry_block:  entry_block
+    }
+}
+
+fn deser_params(arr_str: string) -> [IRParam] {
+    let result = []
+    if arr_str == null || arr_str == "[]" {
+        return result
+    }
+    let items = deser_json_array_items(arr_str)
+    for item in items {
+        let pname = deser_json_string(item, "name")
+        let ptype = deser_type(deser_json_object(item, "type"))
+        result.push(IRParam { name: pname, type: ptype })
+    }
+    return result
+}
+
+fn deser_blocks(obj_str: string) -> dict {
+    let result = dict()
+    if obj_str == null || obj_str == "{}" {
+        return result
+    }
+    let entries = deser_object_entries(obj_str)
+    for entry in entries {
+        let label = entry[0]
+        let bval  = entry[1]
+        result[label] = deser_block(bval)
+    }
+    return result
+}
+
+fn deser_block(s: string) -> IRBlock {
+    let label = deser_json_string(s, "label")
+    let instrs = deser_instructions(deser_json_array_str(s, "instructions"))
+    let preds  = deser_string_array(deser_json_array_str(s, "predecessors"))
+    let succs  = deser_string_array(deser_json_array_str(s, "successors"))
+
+    return IRBlock {
+        label:        label,
+        instructions: instrs,
+        predecessors: preds,
+        successors:   succs
+    }
+}
+
+fn deser_instructions(arr_str: string) -> [IRInstruction] {
+    let result = []
+    if arr_str == null || arr_str == "[]" {
+        return result
+    }
+    let items = deser_json_array_items(arr_str)
+    for item in items {
+        result.push(deser_instruction(item))
+    }
+    return result
+}
+
+fn deser_instruction(s: string) -> IRInstruction {
+    let id       = deser_json_int(s, "id")
+    let opcode   = deser_opcode(deser_json_object(s, "opcode"))
+    let operands = deser_operands(deser_json_array_str(s, "operands"))
+    let result_str = deser_json_nullable_object(s, "result")
+    let result_val = if result_str == null {
+        Option[IRValue].None
+    } else {
+        Option[IRValue].Some(deser_ir_value(result_str))
+    }
+    let line       = deser_json_int(s, "line")
+    let column     = deser_json_int(s, "column")
+    let ffi_wasm   = deser_json_bool(s, "ffi_wasm")
+    let ffi_js     = deser_json_bool(s, "ffi_js")
+    let debug_name = deser_json_string(s, "debug_name")
+
+    return IRInstruction {
+        id:         id,
+        opcode:     opcode,
+        operands:   operands,
+        result:     result_val,
+        line:       line,
+        column:     column,
+        ffi_wasm:   ffi_wasm,
+        ffi_js:     ffi_js,
+        debug_name: debug_name != null ? debug_name : ""
+    }
+}
+
+fn deser_operands(arr_str: string) -> [IROperand] {
+    let result = []
+    if arr_str == null || arr_str == "[]" {
+        return result
+    }
+    let items = deser_json_array_items(arr_str)
+    for item in items {
+        let vobj = deser_json_object(item, "value")
+        let tobj = deser_json_object(item, "type")
+        result.push(IROperand {
+            value: deser_ir_value(vobj),
+            type:  deser_type(tobj)
+        })
+    }
+    return result
+}
+
+fn deser_ir_value(s: string) -> IRValue {
+    return IRValue {
+        kind: deser_json_string(s, "kind"),
+        data: deser_json_string(s, "data")
+    }
+}
+
+fn deser_opcode(s: string) -> IROpcode {
+    return IROpcode {
+        name: deser_json_string(s, "name"),
+        kind: deser_json_string(s, "kind")
+    }
+}
+
+fn deser_type(s: string) -> Type {
+    if s == null {
+        return Type { kind: "Any", name: "Any", params: [], is_owned: false, trait_bounds: [] }
+    }
+    let kind = deser_json_string(s, "kind")
+    let name = deser_json_string(s, "name")
+    let params_arr = deser_json_array_str(s, "params")
+    let params = deser_type_array(params_arr)
+    let is_owned = deser_json_bool(s, "is_owned")
+    let bounds_arr = deser_json_array_str(s, "trait_bounds")
+    let trait_bounds = deser_string_array(bounds_arr)
+
+    return Type {
+        kind:         kind != null ? kind : "Any",
+        name:         name != null ? name : "Any",
+        params:       params,
+        is_owned:     is_owned,
+        trait_bounds: trait_bounds
+    }
+}
+
+fn deser_type_array(arr_str: string) -> [Type] {
+    let result = []
+    if arr_str == null || arr_str == "[]" {
+        return result
+    }
+    let items = deser_json_array_items(arr_str)
+    for item in items {
+        result.push(deser_type(item))
+    }
+    return result
+}
+
+fn deser_globals(obj_str: string) -> dict {
+    let result = dict()
+    if obj_str == null || obj_str == "{}" {
+        return result
+    }
+    let entries = deser_object_entries(obj_str)
+    for entry in entries {
+        let gname = entry[0]
+        let gval  = entry[1]
+        result[gname] = deser_ir_value(gval)
+    }
+    return result
+}
+
+fn deser_constants(arr_str: string) -> [IRConstant] {
+    let result = []
+    if arr_str == null || arr_str == "[]" {
+        return result
+    }
+    let items = deser_json_array_items(arr_str)
+    for item in items {
+        let cval  = deser_json_string(item, "value")
+        let ctype = deser_type(deser_json_object(item, "type"))
+        result.push(IRConstant { value: cval, type: ctype })
+    }
+    return result
+}
+
+fn deser_string_array(arr_str: string) -> [string] {
+    if arr_str == null || arr_str == "[]" {
+        return []
+    }
+    let items = deser_json_array_items(arr_str)
+    let result = []
+    for item in items {
+        result.push(deser_unquote(item.trim()))
+    }
+    return result
+}
+
+// ─────────────────────────────────────────────
+// Utilitários mínimos de parse JSON para IR
+// ─────────────────────────────────────────────
+
+fn deser_json_string(s: string, key: string) -> string {
+    let search = "\"" + key + "\":"
+    let idx = s.index_of(search)
+    if idx < 0 { return null }
+    let after = s.slice(idx + search.len, s.len).trim_start()
+    if after.starts_with("null") { return null }
+    if !after.starts_with("\"") { return null }
+    return deser_read_string(after)
+}
+
+fn deser_json_int(s: string, key: string) -> int {
+    let search = "\"" + key + "\":"
+    let idx = s.index_of(search)
+    if idx < 0 { return 0 }
+    let after = s.slice(idx + search.len, s.len).trim_start()
+    let num_str = ""
+    let start = 0
+    if after.len > 0 && after.char_at(0) == "-" {
+        num_str = "-"
+        start = 1
+    }
+    for i in start..after.len {
+        let ch = after.char_at(i)
+        if ch >= "0" && ch <= "9" {
+            num_str = num_str + ch
+        } else {
+            break
+        }
+    }
+    if num_str == "" || num_str == "-" { return 0 }
+    return num_str.to_int()
+}
+
+fn deser_json_bool(s: string, key: string) -> bool {
+    let search = "\"" + key + "\":"
+    let idx = s.index_of(search)
+    if idx < 0 { return false }
+    let after = s.slice(idx + search.len, s.len).trim_start()
+    return after.starts_with("true")
+}
+
+fn deser_json_object(s: string, key: string) -> string {
+    let search = "\"" + key + "\":"
+    let idx = s.index_of(search)
+    if idx < 0 { return null }
+    let after = s.slice(idx + search.len, s.len).trim_start()
+    if after.starts_with("null") { return null }
+    if !after.starts_with("{") { return null }
+    return extract_balanced(after, "{", "}")
+}
+
+fn deser_json_nullable_object(s: string, key: string) -> string {
+    let search = "\"" + key + "\":"
+    let idx = s.index_of(search)
+    if idx < 0 { return null }
+    let after = s.slice(idx + search.len, s.len).trim_start()
+    if after.starts_with("null") { return null }
+    if after.starts_with("{") { return extract_balanced(after, "{", "}") }
+    return null
+}
+
+fn deser_json_array_str(s: string, key: string) -> string {
+    let search = "\"" + key + "\":"
+    let idx = s.index_of(search)
+    if idx < 0 { return null }
+    let after = s.slice(idx + search.len, s.len).trim_start()
+    if after.starts_with("null") { return null }
+    if !after.starts_with("[") { return null }
+    return extract_balanced(after, "[", "]")
+}
+
+fn deser_json_array_items(arr_str: string) -> [string] {
+    // arr_str é a string do array já com [ e ]
+    if arr_str == null { return [] }
+    let inner = arr_str.slice(1, arr_str.len - 1).trim()
+    if inner.len == 0 { return [] }
+    return split_json_elements(inner)
+}
+
+fn deser_read_string(s: string) -> string {
+    // s começa com "
+    let result = ""
+    let i = 1
+    while i < s.len {
+        let ch = s.char_at(i)
+        if ch == "\\" && i + 1 < s.len {
+            let next = s.char_at(i + 1)
+            if next == "\"" { result = result + "\"" }
+            else if next == "\\" { result = result + "\\" }
+            else if next == "n"  { result = result + "\n" }
+            else if next == "r"  { result = result + "\r" }
+            else if next == "t"  { result = result + "\t" }
+            else { result = result + next }
+            i = i + 2
+        } else if ch == "\"" {
+            break
+        } else {
+            result = result + ch
+            i = i + 1
+        }
+    }
+    return result
+}
+
+fn deser_unquote(s: string) -> string {
+    if s.starts_with("\"") {
+        return deser_read_string(s)
+    }
+    return s
+}
+
+fn extract_balanced(s: string, open: string, close: string) -> string {
+    let depth = 0
+    let result = ""
+    let in_str = false
+    for i in 0..s.len {
+        let ch = s.char_at(i)
+        if in_str {
+            result = result + ch
+            if ch == "\"" && (i == 0 || s.char_at(i - 1) != "\\") {
+                in_str = false
+            }
+        } else if ch == "\"" {
+            result = result + ch
+            in_str = true
+        } else if ch == open {
+            depth = depth + 1
+            result = result + ch
+        } else if ch == close {
+            depth = depth - 1
+            result = result + ch
+            if depth == 0 { break }
+        } else {
+            result = result + ch
+        }
+    }
+    return result
+}
+
+fn split_json_elements(inner: string) -> [string] {
+    let elements = []
+    let i = 0
+    while i < inner.len {
+        let ch = inner.char_at(i)
+        if ch == " " || ch == "\n" || ch == "\r" || ch == "\t" || ch == "," {
+            i = i + 1
+        } else if ch == "{" {
+            let elem = extract_balanced(inner.slice(i, inner.len), "{", "}")
+            elements.push(elem)
+            i = i + elem.len
+        } else if ch == "[" {
+            let elem = extract_balanced(inner.slice(i, inner.len), "[", "]")
+            elements.push(elem)
+            i = i + elem.len
+        } else if ch == "\"" {
+            let elem = read_raw_json_string(inner.slice(i, inner.len))
+            elements.push(elem)
+            i = i + elem.len
+        } else {
+            // number / bool / null
+            let end = i
+            while end < inner.len {
+                let c = inner.char_at(end)
+                if c == "," || c == " " || c == "]" || c == "}" { break }
+                end = end + 1
+            }
+            if end > i { elements.push(inner.slice(i, end)) }
+            i = end
+        }
+    }
+    return elements
+}
+
+fn read_raw_json_string(s: string) -> string {
+    let result = "\""
+    let i = 1
+    while i < s.len {
+        let ch = s.char_at(i)
+        result = result + ch
+        if ch == "\\" && i + 1 < s.len {
+            result = result + s.char_at(i + 1)
+            i = i + 2
+        } else if ch == "\"" {
+            break
+        } else {
+            i = i + 1
+        }
+    }
+    return result
+}
+
+fn deser_object_entries(obj_str: string) -> [[string]] {
+    // Retorna lista de pares [chave, valor] do objeto JSON
+    let entries = []
+    if obj_str == null || obj_str == "{}" {
+        return entries
+    }
+    let inner = obj_str.slice(1, obj_str.len - 1).trim()
+    let i = 0
+    while i < inner.len {
+        let ch = inner.char_at(i)
+        if ch == " " || ch == "," || ch == "\n" {
+            i = i + 1
+            continue
+        }
+        if ch == "\"" {
+            // Lê a chave
+            let key_raw = read_raw_json_string(inner.slice(i, inner.len))
+            let key = deser_unquote(key_raw)
+            i = i + key_raw.len
+
+            // Pula o ":"
+            while i < inner.len && inner.char_at(i) != ":" {
+                i = i + 1
+            }
+            i = i + 1  // pula ":"
+            while i < inner.len && (inner.char_at(i) == " " || inner.char_at(i) == "\n") {
+                i = i + 1
+            }
+
+            // Lê o valor
+            let rest = inner.slice(i, inner.len)
+            let first = rest.char_at(0)
+            let val = ""
+            if first == "{" {
+                val = extract_balanced(rest, "{", "}")
+            } else if first == "[" {
+                val = extract_balanced(rest, "[", "]")
+            } else if first == "\"" {
+                val = read_raw_json_string(rest)
+            } else {
+                // number/bool/null
+                let end = 0
+                while end < rest.len {
+                    let c = rest.char_at(end)
+                    if c == "," || c == " " || c == "}" { break }
+                    end = end + 1
+                }
+                val = rest.slice(0, end)
+            }
+            entries.push([key, val])
+            i = i + val.len
+        } else {
+            i = i + 1
+        }
+    }
+    return entries
+}
+
+// ─────────────────────────────────────────────
+// ir_modules_equivalent — comparação estrutural
+// ─────────────────────────────────────────────
+
+/// Verifica equivalência estrutural entre dois IRModules.
+/// Requisito: 1.9
+fn ir_modules_equivalent(a: IRModule, b: IRModule) -> bool {
+    if a.name != b.name { return false }
+
+    // Verificar funções
+    let a_fnames = a.functions.keys()
+    let b_fnames = b.functions.keys()
+    if a_fnames.len != b_fnames.len { return false }
+
+    for fname in a_fnames {
+        if !b.functions.has(fname) { return false }
+        if !functions_equivalent(a.functions[fname], b.functions[fname]) { return false }
+    }
+
+    // Verificar constantes
+    if a.constants.len != b.constants.len { return false }
+    for i in 0..a.constants.len {
+        if !constants_equivalent(a.constants[i], b.constants[i]) { return false }
+    }
+
+    return true
+}
+
+fn functions_equivalent(a: IRFunction, b: IRFunction) -> bool {
+    if a.name != b.name { return false }
+    if a.entry_block != b.entry_block { return false }
+    if a.params.len != b.params.len { return false }
+    if !types_equivalent(a.return_type, b.return_type) { return false }
+
+    let a_blocks = a.blocks.keys()
+    let b_blocks = b.blocks.keys()
+    if a_blocks.len != b_blocks.len { return false }
+
+    for lbl in a_blocks {
+        if !b.blocks.has(lbl) { return false }
+        if !blocks_equivalent(a.blocks[lbl], b.blocks[lbl]) { return false }
+    }
+
+    return true
+}
+
+fn blocks_equivalent(a: IRBlock, b: IRBlock) -> bool {
+    if a.label != b.label { return false }
+    if a.instructions.len != b.instructions.len { return false }
+    for i in 0..a.instructions.len {
+        if !instructions_equivalent(a.instructions[i], b.instructions[i]) { return false }
+    }
+    return true
+}
+
+fn instructions_equivalent(a: IRInstruction, b: IRInstruction) -> bool {
+    if a.id != b.id { return false }
+    if a.opcode.name != b.opcode.name { return false }
+    if a.ffi_wasm != b.ffi_wasm { return false }
+    if a.ffi_js != b.ffi_js { return false }
+    if a.debug_name != b.debug_name { return false }
+    if a.operands.len != b.operands.len { return false }
+
+    let a_result = match a.result {
+        Option[IRValue].Some(v) => v.data
+        Option[IRValue].None => "_none_"
+    }
+    let b_result = match b.result {
+        Option[IRValue].Some(v) => v.data
+        Option[IRValue].None => "_none_"
+    }
+    if a_result != b_result { return false }
+
+    return true
+}
+
+fn types_equivalent(a: Type, b: Type) -> bool {
+    if a.kind != b.kind { return false }
+    if a.name != b.name { return false }
+    if a.is_owned != b.is_owned { return false }
+    if a.params.len != b.params.len { return false }
+    for i in 0..a.params.len {
+        if !types_equivalent(a.params[i], b.params[i]) { return false }
+    }
+    return true
+}
+
+fn constants_equivalent(a: IRConstant, b: IRConstant) -> bool {
+    return a.value.to_string() == b.value.to_string() && types_equivalent(a.type, b.type)
+}
+
+// ─────────────────────────────────────────────
+// has_ssa_property — verifica propriedade SSA
+// ─────────────────────────────────────────────
+
+/// Verifica que nenhum IRValue.data aparece em `result` de mais de uma instrução.
+/// Requisito: 1.2
+fn has_ssa_property(func: IRFunction) -> bool {
+    let defined = dict()
+    for block_label in func.blocks.keys() {
+        let block = func.blocks[block_label]
+        for instr in block.instructions {
+            match instr.result {
+                Option[IRValue].Some(v) => {
+                    if defined.has(v.data) {
+                        return false  // definido mais de uma vez
+                    }
+                    defined[v.data] = true
+                }
+                Option[IRValue].None => {}
+            }
+        }
+    }
+    return true
+}
+
+// ─────────────────────────────────────────────
+// Representação textual para --debug
+// ─────────────────────────────────────────────
+
+/// Emite representação textual legível do IRModule (para flag --debug).
+/// Requisito: 1.10
+fn emit_ir_text(module: IRModule) -> string {
+    let lines = []
+    lines.push("; IRModule: " + module.name)
+    lines.push("")
+
+    for fname in module.functions.keys() {
+        let f = module.functions[fname]
+        lines.push("fn " + f.name + "(" + format_params(f.params) + ") -> " + format_type(f.return_type) + " {")
+        for block_label in f.blocks.keys() {
+            let block = f.blocks[block_label]
+            lines.push("  " + block.label + ":")
+            for instr in block.instructions {
+                lines.push("    " + format_instruction(instr))
+            }
+        }
+        lines.push("}")
+        lines.push("")
+    }
+
+    if module.constants.len > 0 {
+        lines.push("; Constants:")
+        for i in 0..module.constants.len {
+            let c = module.constants[i]
+            lines.push("  const[" + i.to_string() + "] = " + c.value.to_string() + " : " + format_type(c.type))
+        }
+    }
+
+    return lines.join("\n")
+}
+
+fn format_params(params: [IRParam]) -> string {
+    let parts = []
+    for p in params {
+        parts.push(p.name + ": " + format_type(p.type))
+    }
+    return parts.join(", ")
+}
+
+fn format_type(t: Type) -> string {
+    if t.params.len == 0 {
+        return t.name
+    }
+    let param_strs = []
+    for p in t.params {
+        param_strs.push(format_type(p))
+    }
+    return t.name + "[" + param_strs.join(", ") + "]"
+}
+
+fn format_instruction(instr: IRInstruction) -> string {
+    let result_str = match instr.result {
+        Option[IRValue].Some(v) => v.kind + ":" + v.data + " = "
+        Option[IRValue].None    => ""
+    }
+
+    let operand_parts = []
+    for op in instr.operands {
+        operand_parts.push(op.value.kind + ":" + op.value.data)
+    }
+
+    let flags = ""
+    if instr.ffi_wasm { flags = flags + " [ffi:wasm]" }
+    if instr.ffi_js   { flags = flags + " [ffi:js]"   }
+
+    let dbg = if instr.debug_name.len > 0 { " ; " + instr.debug_name } else { "" }
+
+    return result_str + instr.opcode.name + " " + operand_parts.join(", ") + flags + dbg
+}
+
+// ─────────────────────────────────────────────
+// Diagnostic SEED010 — ASTNode sem lowering
+// ─────────────────────────────────────────────
+
+/// Emite Diagnostic SEED010 para ASTNode sem lowering definido.
+/// Requisito: 1.8
+fn emit_seed010(ctx: IRContext, node: ASTNode) {
+    let loc = Location {
+        file:       "unknown",
+        line:       node.line,
+        column:     node.column,
+        end_line:   node.line,
+        end_column: node.column + node.value.len
+    }
+    let d = diagnostic_error(
+        "SEED010",
+        loc,
+        "ASTNode sem lowering definido: '" + node.type + "'",
+        node.value,
+        "Implemente o lowering para este nó ou verifique se o tipo de nó está correto."
+    )
+    ctx.diagnostics.push(d)
+}
+
+// ─────────────────────────────────────────────
+// Funções de lowering (existentes — mantidas com extensões)
+// ─────────────────────────────────────────────
 
 fn ir_context(module_name: string) -> IRContext {
     return IRContext {
@@ -123,14 +1500,29 @@ fn ir_context(module_name: string) -> IRContext {
         current_function: Option[string].None,
         current_block: Option[string].None,
         value_counter: 0,
-        block_counter: 0
+        block_counter: 0,
+        diagnostics: [],
+        debug_mode: false
     }
+}
+
+fn ir_context_debug(module_name: string) -> IRContext {
+    let ctx = ir_context(module_name)
+    ctx.debug_mode = true
+    return ctx
 }
 
 fn generate_ir(ast: ASTNode) -> IRModule {
     let ctx = ir_context("main")
     lower_module(ctx, ast)
     return ctx.module
+}
+
+fn generate_ir_with_debug(ast: ASTNode) -> (IRModule, string) {
+    let ctx = ir_context_debug("main")
+    lower_module(ctx, ast)
+    let text = emit_ir_text(ctx.module)
+    return (ctx.module, text)
 }
 
 fn lower_module(ctx: IRContext, node: ASTNode) {
@@ -146,7 +1538,13 @@ fn lower_module(ctx: IRContext, node: ASTNode) {
         "LetDeclaration" | "ConstDeclaration" => {
             lower_global(ctx, node)
         }
-        _ => {}
+        "UnionDeclaration" => {
+            lower_union_declaration(ctx, node)
+        }
+        _ => {
+            // ASTNode sem lowering definido — emite SEED010 (requisito 1.8)
+            emit_seed010(ctx, node)
+        }
     }
 }
 
@@ -155,8 +1553,7 @@ fn lower_function(ctx: IRContext, node: ASTNode) {
     let params_node = node.children[0]
     let return_type_node = node.children[1]
     let body = node.children[2]
-    
-    // Create function
+
     let func = IRFunction {
         name: name,
         params: [],
@@ -164,11 +1561,10 @@ fn lower_function(ctx: IRContext, node: ASTNode) {
         blocks: dict(),
         entry_block: ""
     }
-    
+
     ctx.current_function = Option[string].Some(name)
     ctx.module.functions[name] = func
-    
-    // Create entry block
+
     let entry_label = new_block(ctx)
     func.entry_block = entry_label
     func.blocks[entry_label] = IRBlock {
@@ -177,39 +1573,158 @@ fn lower_function(ctx: IRContext, node: ASTNode) {
         predecessors: [],
         successors: []
     }
-    
+
     ctx.current_block = Option[string].Some(entry_label)
-    
-    // Lower parameters
+
     for param in params_node.children {
         func.params.push(IRParam {
             name: param.value,
             type: resolve_type(param.children[0])
         })
     }
-    
-    // Lower body
+
     lower_block(ctx, body)
-    
-    // Add implicit return if needed
-    let block = func.blocks[entry_label]
-    if block.instructions.len == 0 || 
-       block.instructions[block.instructions.len - 1].opcode.name != "ret" {
-        add_instruction(ctx, IRInstruction {
-            id: next_id(ctx),
-            opcode: OP_RET,
-            operands: [],
-            result: Option[IRValue].None,
-            line: node.line,
-            column: node.column
+
+    // Implicit return se necessário
+    match ctx.current_block {
+        Option[string].Some(blabel) => {
+            match ctx.current_function {
+                Option[string].Some(fname) => {
+                    let f = ctx.module.functions[fname]
+                    if f.blocks.has(blabel) {
+                        let b = f.blocks[blabel]
+                        if b.instructions.len == 0 ||
+                           b.instructions[b.instructions.len - 1].opcode.name != "ret" {
+                            add_instruction(ctx, make_instr(ctx, OP_RET, [], Option[IRValue].None, node.line, node.column))
+                        }
+                    }
+                }
+                Option[string].None => {}
+            }
+        }
+        Option[string].None => {}
+    }
+}
+
+/// Lowering de declarações de Union type.
+/// Gera IRConstant com o tipo da union e os opcodes OP_UNION_TAG/OP_UNION_ACCESS.
+/// Requisito: 1.3
+fn lower_union_declaration(ctx: IRContext, node: ASTNode) {
+    let union_name = node.value
+    let variants = node.children
+
+    // Registra a union como constante de tipo
+    let variant_types = []
+    for v in variants {
+        variant_types.push(Type {
+            kind: "Named",
+            name: v.value,
+            params: [],
+            is_owned: false,
+            trait_bounds: []
         })
     }
+
+    let union_type = Type {
+        kind: "Union",
+        name: union_name,
+        params: variant_types,
+        is_owned: false,
+        trait_bounds: []
+    }
+
+    ctx.module.constants.push(IRConstant {
+        value: union_name,
+        type: union_type
+    })
+}
+
+/// Lowering de um valor de Union type — emite OP_UNION_TAG + OP_UNION_ACCESS.
+/// Requisito: 1.3
+fn lower_union_value(ctx: IRContext, node: ASTNode, variant_name: string) -> IRValue {
+    let value = lower_expression(ctx, node)
+
+    // OP_UNION_TAG — emite a tag da variante
+    let tag_result = new_value(ctx, "union_tag")
+    add_instruction(ctx, IRInstruction {
+        id: next_id(ctx),
+        opcode: OP_UNION_TAG,
+        operands: [IROperand {
+            value: IRValue { kind: "string", data: variant_name },
+            type: Type { kind: "String", name: "String", params: [], is_owned: false, trait_bounds: [] }
+        }],
+        result: Option[IRValue].Some(tag_result),
+        line: node.line,
+        column: node.column,
+        ffi_wasm: false,
+        ffi_js: false,
+        debug_name: "union_tag." + variant_name
+    })
+
+    // OP_UNION_ACCESS — acessa o valor pela tag
+    let access_result = new_value(ctx, "union_access")
+    add_instruction(ctx, IRInstruction {
+        id: next_id(ctx),
+        opcode: OP_UNION_ACCESS,
+        operands: [
+            IROperand { value: value,      type: Type { kind: "Any", name: "Any", params: [], is_owned: false, trait_bounds: [] } },
+            IROperand { value: tag_result, type: Type { kind: "String", name: "String", params: [], is_owned: false, trait_bounds: [] } }
+        ],
+        result: Option[IRValue].Some(access_result),
+        line: node.line,
+        column: node.column,
+        ffi_wasm: false,
+        ffi_js: false,
+        debug_name: "union_access." + variant_name
+    })
+
+    return access_result
+}
+
+/// Lowering de Closures — emite OP_CAPTURE × n + OP_MAKE_CLOSURE.
+/// Requisito: 1.6
+fn lower_closure(ctx: IRContext, node: ASTNode, upvalues: [string]) -> IRValue {
+    // Emite OP_CAPTURE para cada upvalue
+    for uv in upvalues {
+        add_instruction(ctx, IRInstruction {
+            id: next_id(ctx),
+            opcode: OP_CAPTURE,
+            operands: [IROperand {
+                value: IRValue { kind: "identifier", data: uv },
+                type: Type { kind: "Any", name: "Any", params: [], is_owned: false, trait_bounds: [] }
+            }],
+            result: Option[IRValue].None,
+            line: node.line,
+            column: node.column,
+            ffi_wasm: false,
+            ffi_js: false,
+            debug_name: "capture." + uv
+        })
+    }
+
+    // Emite OP_MAKE_CLOSURE
+    let closure_result = new_value(ctx, "closure")
+    add_instruction(ctx, IRInstruction {
+        id: next_id(ctx),
+        opcode: OP_MAKE_CLOSURE,
+        operands: [IROperand {
+            value: IRValue { kind: "function", data: node.value },
+            type: Type { kind: "Function", name: "Function", params: [], is_owned: false, trait_bounds: [] }
+        }],
+        result: Option[IRValue].Some(closure_result),
+        line: node.line,
+        column: node.column,
+        ffi_wasm: false,
+        ffi_js: false,
+        debug_name: "closure." + node.value
+    })
+
+    return closure_result
 }
 
 fn lower_global(ctx: IRContext, node: ASTNode) {
     let name = node.value
     let init = node.children[1]
-    
     if init != null {
         let value = lower_expression(ctx, init)
         ctx.module.globals[name] = value
@@ -228,408 +1743,219 @@ fn lower_statement(ctx: IRContext, node: ASTNode) {
             let name = node.value
             let init = node.children[1]
             let value = lower_expression(ctx, init)
-            
+
             let alloc_result = new_value(ctx, "ptr")
-            add_instruction(ctx, IRInstruction {
-                id: next_id(ctx),
-                opcode: OP_ALLOC,
-                operands: [IROperand {
+            add_instruction(ctx, make_instr_result(ctx, OP_ALLOC,
+                [IROperand {
                     value: IRValue { kind: "size", data: "8" },
-                    type: Type { kind: "Int", name: "Int", params: [] }
+                    type: Type { kind: "Int", name: "Int", params: [], is_owned: false, trait_bounds: [] }
                 }],
-                result: Option[IRValue].Some(alloc_result),
-                line: node.line,
-                column: node.column
-            })
-            
-            add_instruction(ctx, IRInstruction {
-                id: next_id(ctx),
-                opcode: OP_STORE,
-                operands: [
-                    IROperand { value: alloc_result, type: Type { kind: "Ptr", name: "Ptr", params: [] } },
-                    IROperand { value: value, type: Type { kind: "Any", name: "Any", params: [] } }
+                alloc_result, node.line, node.column))
+
+            add_instruction(ctx, make_instr(ctx, OP_STORE,
+                [
+                    IROperand { value: alloc_result, type: Type { kind: "Ptr", name: "Ptr", params: [], is_owned: false, trait_bounds: [] } },
+                    IROperand { value: value,         type: Type { kind: "Any", name: "Any", params: [], is_owned: false, trait_bounds: [] } }
                 ],
-                result: Option[IRValue].None,
-                line: node.line,
-                column: node.column
-            })
+                Option[IRValue].None, node.line, node.column))
         }
-        "If" => {
-            lower_if(ctx, node)
-        }
-        "While" => {
-            lower_while(ctx, node)
-        }
-        "For" => {
-            lower_for(ctx, node)
-        }
+        "If"     => { lower_if(ctx, node) }
+        "While"  => { lower_while(ctx, node) }
+        "For"    => { lower_for(ctx, node) }
         "Return" => {
             let value = node.children[0]
             if value != null {
                 let ir_value = lower_expression(ctx, value)
-                add_instruction(ctx, IRInstruction {
-                    id: next_id(ctx),
-                    opcode: OP_RET,
-                    operands: [IROperand {
-                        value: ir_value,
-                        type: Type { kind: "Any", name: "Any", params: [] }
-                    }],
-                    result: Option[IRValue].None,
-                    line: node.line,
-                    column: node.column
-                })
+                add_instruction(ctx, make_instr(ctx, OP_RET,
+                    [IROperand { value: ir_value, type: Type { kind: "Any", name: "Any", params: [], is_owned: false, trait_bounds: [] } }],
+                    Option[IRValue].None, node.line, node.column))
             } else {
-                add_instruction(ctx, IRInstruction {
-                    id: next_id(ctx),
-                    opcode: OP_RET,
-                    operands: [],
-                    result: Option[IRValue].None,
-                    line: node.line,
-                    column: node.column
-                })
+                add_instruction(ctx, make_instr(ctx, OP_RET, [], Option[IRValue].None, node.line, node.column))
             }
         }
-        "Match" => {
-            lower_match(ctx, node)
-        }
+        "Match" => { lower_match(ctx, node) }
         _ => {
-            // Expression statement
             lower_expression(ctx, node)
         }
     }
 }
 
 fn lower_if(ctx: IRContext, node: ASTNode) {
-    let condition = node.children[0]
+    let condition   = node.children[0]
     let then_branch = node.children[1]
     let else_branch = node.children[2]
-    
+
     let cond_value = lower_expression(ctx, condition)
-    
+
     let then_label = new_block(ctx)
     let else_label = if else_branch != null { new_block(ctx) } else { "" }
-    let end_label = new_block(ctx)
-    
-    // Conditional jump
-    add_instruction(ctx, IRInstruction {
-        id: next_id(ctx),
-        opcode: OP_JNZ,
-        operands: [IROperand {
-            value: cond_value,
-            type: Type { kind: "Bool", name: "Bool", params: [] }
-        }],
-        result: Option[IRValue].Some(IRValue { kind: "label", data: then_label }),
-        line: node.line,
-        column: node.column
-    })
-    
-    // Jump to else or end
-    if else_branch != null {
-        add_instruction(ctx, IRInstruction {
-            id: next_id(ctx),
-            opcode: OP_JMP,
-            operands: [],
-            result: Option[IRValue].Some(IRValue { kind: "label", data: else_label }),
-            line: node.line,
-            column: node.column
-        })
-    } else {
-        add_instruction(ctx, IRInstruction {
-            id: next_id(ctx),
-            opcode: OP_JMP,
-            operands: [],
-            result: Option[IRValue].Some(IRValue { kind: "label", data: end_label }),
-            line: node.line,
-            column: node.column
-        })
-    }
-    
-    // Then block
+    let end_label  = new_block(ctx)
+
+    add_instruction(ctx, make_instr(ctx, OP_JNZ,
+        [IROperand { value: cond_value, type: Type { kind: "Bool", name: "Bool", params: [], is_owned: false, trait_bounds: [] } }],
+        Option[IRValue].Some(IRValue { kind: "label", data: then_label }),
+        node.line, node.column))
+
+    let jump_target = if else_branch != null { else_label } else { end_label }
+    add_instruction(ctx, make_instr(ctx, OP_JMP, [],
+        Option[IRValue].Some(IRValue { kind: "label", data: jump_target }),
+        node.line, node.column))
+
     set_current_block(ctx, then_label)
     lower_block(ctx, then_branch)
-    add_instruction(ctx, IRInstruction {
-        id: next_id(ctx),
-        opcode: OP_JMP,
-        operands: [],
-        result: Option[IRValue].Some(IRValue { kind: "label", data: end_label }),
-        line: node.line,
-        column: node.column
-    })
-    
-    // Else block
+    add_instruction(ctx, make_instr(ctx, OP_JMP, [],
+        Option[IRValue].Some(IRValue { kind: "label", data: end_label }),
+        node.line, node.column))
+
     if else_branch != null {
         set_current_block(ctx, else_label)
         lower_block(ctx, else_branch)
-        add_instruction(ctx, IRInstruction {
-            id: next_id(ctx),
-            opcode: OP_JMP,
-            operands: [],
-            result: Option[IRValue].Some(IRValue { kind: "label", data: end_label }),
-            line: node.line,
-            column: node.column
-        })
+        add_instruction(ctx, make_instr(ctx, OP_JMP, [],
+            Option[IRValue].Some(IRValue { kind: "label", data: end_label }),
+            node.line, node.column))
     }
-    
-    // End block
+
     set_current_block(ctx, end_label)
 }
 
 fn lower_while(ctx: IRContext, node: ASTNode) {
     let condition = node.children[0]
-    let body = node.children[1]
-    
+    let body      = node.children[1]
+
     let cond_label = new_block(ctx)
     let body_label = new_block(ctx)
-    let end_label = new_block(ctx)
-    
-    // Jump to condition
-    add_instruction(ctx, IRInstruction {
-        id: next_id(ctx),
-        opcode: OP_JMP,
-        operands: [],
-        result: Option[IRValue].Some(IRValue { kind: "label", data: cond_label }),
-        line: node.line,
-        column: node.column
-    })
-    
-    // Condition block
+    let end_label  = new_block(ctx)
+
+    add_instruction(ctx, make_instr(ctx, OP_JMP, [],
+        Option[IRValue].Some(IRValue { kind: "label", data: cond_label }),
+        node.line, node.column))
+
     set_current_block(ctx, cond_label)
     let cond_value = lower_expression(ctx, condition)
-    add_instruction(ctx, IRInstruction {
-        id: next_id(ctx),
-        opcode: OP_JNZ,
-        operands: [IROperand {
-            value: cond_value,
-            type: Type { kind: "Bool", name: "Bool", params: [] }
-        }],
-        result: Option[IRValue].Some(IRValue { kind: "label", data: body_label }),
-        line: node.line,
-        column: node.column
-    })
-    add_instruction(ctx, IRInstruction {
-        id: next_id(ctx),
-        opcode: OP_JMP,
-        operands: [],
-        result: Option[IRValue].Some(IRValue { kind: "label", data: end_label }),
-        line: node.line,
-        column: node.column
-    })
-    
-    // Body block
+    add_instruction(ctx, make_instr(ctx, OP_JNZ,
+        [IROperand { value: cond_value, type: Type { kind: "Bool", name: "Bool", params: [], is_owned: false, trait_bounds: [] } }],
+        Option[IRValue].Some(IRValue { kind: "label", data: body_label }),
+        node.line, node.column))
+    add_instruction(ctx, make_instr(ctx, OP_JMP, [],
+        Option[IRValue].Some(IRValue { kind: "label", data: end_label }),
+        node.line, node.column))
+
     set_current_block(ctx, body_label)
     lower_block(ctx, body)
-    add_instruction(ctx, IRInstruction {
-        id: next_id(ctx),
-        opcode: OP_JMP,
-        operands: [],
-        result: Option[IRValue].Some(IRValue { kind: "label", data: cond_label }),
-        line: node.line,
-        column: node.column
-    })
-    
-    // End block
+    add_instruction(ctx, make_instr(ctx, OP_JMP, [],
+        Option[IRValue].Some(IRValue { kind: "label", data: cond_label }),
+        node.line, node.column))
+
     set_current_block(ctx, end_label)
 }
 
 fn lower_for(ctx: IRContext, node: ASTNode) {
-    let pattern = node.children[0]
+    let pattern  = node.children[0]
     let iterable = node.children[1]
-    let body = node.children[2]
-    
+    let body     = node.children[2]
+
     let iter_value = lower_expression(ctx, iterable)
-    
+
     let cond_label = new_block(ctx)
     let body_label = new_block(ctx)
-    let end_label = new_block(ctx)
-    
-    // Setup iterator
+    let end_label  = new_block(ctx)
+
     let iter_result = new_value(ctx, "iter")
-    add_instruction(ctx, IRInstruction {
-        id: next_id(ctx),
-        opcode: OP_CALL,
-        operands: [IROperand {
-            value: IRValue { kind: "function", data: "iter" },
-            type: Type { kind: "Function", name: "iter", params: [] }
-        }, IROperand {
-            value: iter_value,
-            type: Type { kind: "Any", name: "Any", params: [] }
-        }],
-        result: Option[IRValue].Some(iter_result),
-        line: node.line,
-        column: node.column
-    })
-    
-    // Jump to condition
-    add_instruction(ctx, IRInstruction {
-        id: next_id(ctx),
-        opcode: OP_JMP,
-        operands: [],
-        result: Option[IRValue].Some(IRValue { kind: "label", data: cond_label }),
-        line: node.line,
-        column: node.column
-    })
-    
-    // Condition block
+    add_instruction(ctx, make_instr_result(ctx, OP_CALL,
+        [
+            IROperand { value: IRValue { kind: "function", data: "iter" }, type: Type { kind: "Function", name: "iter", params: [], is_owned: false, trait_bounds: [] } },
+            IROperand { value: iter_value, type: Type { kind: "Any", name: "Any", params: [], is_owned: false, trait_bounds: [] } }
+        ],
+        iter_result, node.line, node.column))
+
+    add_instruction(ctx, make_instr(ctx, OP_JMP, [],
+        Option[IRValue].Some(IRValue { kind: "label", data: cond_label }),
+        node.line, node.column))
+
     set_current_block(ctx, cond_label)
     let has_next_result = new_value(ctx, "has_next")
-    add_instruction(ctx, IRInstruction {
-        id: next_id(ctx),
-        opcode: OP_CALL,
-        operands: [IROperand {
-            value: IRValue { kind: "function", data: "has_next" },
-            type: Type { kind: "Function", name: "has_next", params: [] }
-        }, IROperand {
-            value: iter_result,
-            type: Type { kind: "Any", name: "Any", params: [] }
-        }],
-        result: Option[IRValue].Some(has_next_result),
-        line: node.line,
-        column: node.column
-    })
-    add_instruction(ctx, IRInstruction {
-        id: next_id(ctx),
-        opcode: OP_JNZ,
-        operands: [IROperand {
-            value: has_next_result,
-            type: Type { kind: "Bool", name: "Bool", params: [] }
-        }],
-        result: Option[IRValue].Some(IRValue { kind: "label", data: body_label }),
-        line: node.line,
-        column: node.column
-    })
-    add_instruction(ctx, IRInstruction {
-        id: next_id(ctx),
-        opcode: OP_JMP,
-        operands: [],
-        result: Option[IRValue].Some(IRValue { kind: "label", data: end_label }),
-        line: node.line,
-        column: node.column
-    })
-    
-    // Body block
+    add_instruction(ctx, make_instr_result(ctx, OP_CALL,
+        [
+            IROperand { value: IRValue { kind: "function", data: "has_next" }, type: Type { kind: "Function", name: "has_next", params: [], is_owned: false, trait_bounds: [] } },
+            IROperand { value: iter_result, type: Type { kind: "Any", name: "Any", params: [], is_owned: false, trait_bounds: [] } }
+        ],
+        has_next_result, node.line, node.column))
+    add_instruction(ctx, make_instr(ctx, OP_JNZ,
+        [IROperand { value: has_next_result, type: Type { kind: "Bool", name: "Bool", params: [], is_owned: false, trait_bounds: [] } }],
+        Option[IRValue].Some(IRValue { kind: "label", data: body_label }),
+        node.line, node.column))
+    add_instruction(ctx, make_instr(ctx, OP_JMP, [],
+        Option[IRValue].Some(IRValue { kind: "label", data: end_label }),
+        node.line, node.column))
+
     set_current_block(ctx, body_label)
     let next_result = new_value(ctx, "next")
-    add_instruction(ctx, IRInstruction {
-        id: next_id(ctx),
-        opcode: OP_CALL,
-        operands: [IROperand {
-            value: IRValue { kind: "function", data: "next" },
-            type: Type { kind: "Function", name: "next", params: [] }
-        }, IROperand {
-            value: iter_result,
-            type: Type { kind: "Any", name: "Any", params: [] }
-        }],
-        result: Option[IRValue].Some(next_result),
-        line: node.line,
-        column: node.column
-    })
-    
-    // Store in pattern variable
-    let pattern_alloc = new_value(ctx, "ptr")
-    add_instruction(ctx, IRInstruction {
-        id: next_id(ctx),
-        opcode: OP_ALLOC,
-        operands: [IROperand {
-            value: IRValue { kind: "size", data: "8" },
-            type: Type { kind: "Int", name: "Int", params: [] }
-        }],
-        result: Option[IRValue].Some(pattern_alloc),
-        line: node.line,
-        column: node.column
-    })
-    add_instruction(ctx, IRInstruction {
-        id: next_id(ctx),
-        opcode: OP_STORE,
-        operands: [
-            IROperand { value: pattern_alloc, type: Type { kind: "Ptr", name: "Ptr", params: [] } },
-            IROperand { value: next_result, type: Type { kind: "Any", name: "Any", params: [] } }
+    add_instruction(ctx, make_instr_result(ctx, OP_CALL,
+        [
+            IROperand { value: IRValue { kind: "function", data: "next" }, type: Type { kind: "Function", name: "next", params: [], is_owned: false, trait_bounds: [] } },
+            IROperand { value: iter_result, type: Type { kind: "Any", name: "Any", params: [], is_owned: false, trait_bounds: [] } }
         ],
-        result: Option[IRValue].None,
-        line: node.line,
-        column: node.column
-    })
-    
+        next_result, node.line, node.column))
+
+    let pattern_alloc = new_value(ctx, "ptr")
+    add_instruction(ctx, make_instr_result(ctx, OP_ALLOC,
+        [IROperand { value: IRValue { kind: "size", data: "8" }, type: Type { kind: "Int", name: "Int", params: [], is_owned: false, trait_bounds: [] } }],
+        pattern_alloc, node.line, node.column))
+    add_instruction(ctx, make_instr(ctx, OP_STORE,
+        [
+            IROperand { value: pattern_alloc, type: Type { kind: "Ptr", name: "Ptr", params: [], is_owned: false, trait_bounds: [] } },
+            IROperand { value: next_result,   type: Type { kind: "Any", name: "Any", params: [], is_owned: false, trait_bounds: [] } }
+        ],
+        Option[IRValue].None, node.line, node.column))
+
     lower_block(ctx, body)
-    add_instruction(ctx, IRInstruction {
-        id: next_id(ctx),
-        opcode: OP_JMP,
-        operands: [],
-        result: Option[IRValue].Some(IRValue { kind: "label", data: cond_label }),
-        line: node.line,
-        column: node.column
-    })
-    
-    // End block
+    add_instruction(ctx, make_instr(ctx, OP_JMP, [],
+        Option[IRValue].Some(IRValue { kind: "label", data: cond_label }),
+        node.line, node.column))
+
     set_current_block(ctx, end_label)
 }
 
 fn lower_match(ctx: IRContext, node: ASTNode) {
     let value = node.children[0]
-    let arms = node.children.slice(1, node.children.len)
-    
+    let arms  = node.children.slice(1, node.children.len)
+
     let value_result = lower_expression(ctx, value)
-    
-    let end_label = new_block(ctx)
-    
+    let end_label    = new_block(ctx)
+
     for i in 0..arms.len {
-        let arm = arms[i]
-        let pattern = arm.children[0]
-        let body = arm.children[1]
-        
-        let arm_label = new_block(ctx)
+        let arm        = arms[i]
+        let pattern    = arm.children[0]
+        let body       = arm.children[1]
+        let arm_label  = new_block(ctx)
         let next_label = if i < arms.len - 1 { new_block(ctx) } else { end_label }
-        
-        // Check pattern
+
         let pattern_result = lower_pattern(ctx, pattern)
-        let cmp_result = new_value(ctx, "cmp")
-        add_instruction(ctx, IRInstruction {
-            id: next_id(ctx),
-            opcode: OP_EQ,
-            operands: [
-                IROperand { value: value_result, type: Type { kind: "Any", name: "Any", params: [] } },
-                IROperand { value: pattern_result, type: Type { kind: "Any", name: "Any", params: [] } }
+        let cmp_result     = new_value(ctx, "cmp")
+        add_instruction(ctx, make_instr_result(ctx, OP_EQ,
+            [
+                IROperand { value: value_result,   type: Type { kind: "Any", name: "Any", params: [], is_owned: false, trait_bounds: [] } },
+                IROperand { value: pattern_result, type: Type { kind: "Any", name: "Any", params: [], is_owned: false, trait_bounds: [] } }
             ],
-            result: Option[IRValue].Some(cmp_result),
-            line: node.line,
-            column: node.column
-        })
-        
-        add_instruction(ctx, IRInstruction {
-            id: next_id(ctx),
-            opcode: OP_JNZ,
-            operands: [IROperand {
-                value: cmp_result,
-                type: Type { kind: "Bool", name: "Bool", params: [] }
-            }],
-            result: Option[IRValue].Some(IRValue { kind: "label", data: arm_label }),
-            line: node.line,
-            column: node.column
-        })
-        
-        add_instruction(ctx, IRInstruction {
-            id: next_id(ctx),
-            opcode: OP_JMP,
-            operands: [],
-            result: Option[IRValue].Some(IRValue { kind: "label", data: next_label }),
-            line: node.line,
-            column: node.column
-        })
-        
-        // Arm block
+            cmp_result, node.line, node.column))
+
+        add_instruction(ctx, make_instr(ctx, OP_JNZ,
+            [IROperand { value: cmp_result, type: Type { kind: "Bool", name: "Bool", params: [], is_owned: false, trait_bounds: [] } }],
+            Option[IRValue].Some(IRValue { kind: "label", data: arm_label }),
+            node.line, node.column))
+        add_instruction(ctx, make_instr(ctx, OP_JMP, [],
+            Option[IRValue].Some(IRValue { kind: "label", data: next_label }),
+            node.line, node.column))
+
         set_current_block(ctx, arm_label)
-        let body_result = lower_expression(ctx, body)
-        add_instruction(ctx, IRInstruction {
-            id: next_id(ctx),
-            opcode: OP_JMP,
-            operands: [],
-            result: Option[IRValue].Some(IRValue { kind: "label", data: end_label }),
-            line: node.line,
-            column: node.column
-        })
-        
+        lower_expression(ctx, body)
+        add_instruction(ctx, make_instr(ctx, OP_JMP, [],
+            Option[IRValue].Some(IRValue { kind: "label", data: end_label }),
+            node.line, node.column))
+
         set_current_block(ctx, next_label)
     }
-    
+
     set_current_block(ctx, end_label)
 }
 
@@ -649,206 +1975,171 @@ fn lower_pattern(ctx: IRContext, node: ASTNode) -> IRValue {
 
 fn lower_expression(ctx: IRContext, node: ASTNode) -> IRValue {
     match node.type {
-        "BinaryOp" => {
-            return lower_binary_op(ctx, node)
-        }
-        "UnaryOp" => {
-            return lower_unary_op(ctx, node)
-        }
-        "Call" => {
-            return lower_call(ctx, node)
-        }
-        "FieldAccess" => {
-            return lower_field_access(ctx, node)
-        }
-        "Identifier" => {
-            return IRValue { kind: "identifier", data: node.value }
-        }
-        "NumberLiteral" => {
-            let result = new_value(ctx, "const")
-            ctx.module.constants.push(IRConstant {
-                value: node.value,
-                type: if node.value.contains(".") { 
-                    Type { kind: "Float", name: "Float", params: [] } 
-                } else { 
-                    Type { kind: "Int", name: "Int", params: [] } 
+        "BinaryOp"      => { return lower_binary_op(ctx, node) }
+        "UnaryOp"       => { return lower_unary_op(ctx, node) }
+        "Call"          => { return lower_call(ctx, node) }
+        "FieldAccess"   => { return lower_field_access(ctx, node) }
+        "Identifier"    => { return IRValue { kind: "identifier", data: node.value } }
+        "NumberLiteral" => { return lower_number_literal(ctx, node) }
+        "StringLiteral" => { return lower_string_literal(ctx, node) }
+        "BooleanLiteral" => { return lower_bool_literal(ctx, node) }
+        "ArrayLiteral"  => { return lower_array_literal(ctx, node) }
+        "UnionValue"    => { return lower_union_value(ctx, node, node.value) }
+        "Closure"       => {
+            let upvalues = []
+            for c in node.children {
+                if c.type == "Capture" {
+                    upvalues.push(c.value)
                 }
-            })
-            add_instruction(ctx, IRInstruction {
-                id: next_id(ctx),
-                opcode: OP_CONST,
-                operands: [IROperand {
-                    value: IRValue { kind: "constant", data: (ctx.module.constants.len - 1).to_string() },
-                    type: Type { kind: "Any", name: "Any", params: [] }
-                }],
-                result: Option[IRValue].Some(result),
-                line: node.line,
-                column: node.column
-            })
-            return result
-        }
-        "StringLiteral" => {
-            let result = new_value(ctx, "const")
-            ctx.module.constants.push(IRConstant {
-                value: node.value,
-                type: Type { kind: "String", name: "String", params: [] }
-            })
-            add_instruction(ctx, IRInstruction {
-                id: next_id(ctx),
-                opcode: OP_CONST,
-                operands: [IROperand {
-                    value: IRValue { kind: "constant", data: (ctx.module.constants.len - 1).to_string() },
-                    type: Type { kind: "Any", name: "Any", params: [] }
-                }],
-                result: Option[IRValue].Some(result),
-                line: node.line,
-                column: node.column
-            })
-            return result
-        }
-        "BooleanLiteral" => {
-            let result = new_value(ctx, "const")
-            ctx.module.constants.push(IRConstant {
-                value: node.value,
-                type: Type { kind: "Bool", name: "Bool", params: [] }
-            })
-            add_instruction(ctx, IRInstruction {
-                id: next_id(ctx),
-                opcode: OP_CONST,
-                operands: [IROperand {
-                    value: IRValue { kind: "constant", data: (ctx.module.constants.len - 1).to_string() },
-                    type: Type { kind: "Any", name: "Any", params: [] }
-                }],
-                result: Option[IRValue].Some(result),
-                line: node.line,
-                column: node.column
-            })
-            return result
-        }
-        "ArrayLiteral" => {
-            return lower_array_literal(ctx, node)
+            }
+            return lower_closure(ctx, node, upvalues)
         }
         _ => {
+            // Nó sem lowering definido — emite SEED010 e retorna valor desconhecido
+            emit_seed010(ctx, node)
             return IRValue { kind: "unknown", data: "" }
         }
     }
 }
 
+fn lower_number_literal(ctx: IRContext, node: ASTNode) -> IRValue {
+    let result = new_value(ctx, "const")
+    let t = if node.value.contains(".") {
+        Type { kind: "Float", name: "Float", params: [], is_owned: false, trait_bounds: [] }
+    } else {
+        Type { kind: "Int", name: "Int", params: [], is_owned: false, trait_bounds: [] }
+    }
+    ctx.module.constants.push(IRConstant { value: node.value, type: t })
+    add_instruction(ctx, make_instr_result(ctx, OP_CONST,
+        [IROperand {
+            value: IRValue { kind: "constant", data: (ctx.module.constants.len - 1).to_string() },
+            type: Type { kind: "Any", name: "Any", params: [], is_owned: false, trait_bounds: [] }
+        }],
+        result, node.line, node.column))
+    return result
+}
+
+fn lower_string_literal(ctx: IRContext, node: ASTNode) -> IRValue {
+    let result = new_value(ctx, "const")
+    ctx.module.constants.push(IRConstant {
+        value: node.value,
+        type: Type { kind: "String", name: "String", params: [], is_owned: false, trait_bounds: [] }
+    })
+    add_instruction(ctx, make_instr_result(ctx, OP_CONST,
+        [IROperand {
+            value: IRValue { kind: "constant", data: (ctx.module.constants.len - 1).to_string() },
+            type: Type { kind: "Any", name: "Any", params: [], is_owned: false, trait_bounds: [] }
+        }],
+        result, node.line, node.column))
+    return result
+}
+
+fn lower_bool_literal(ctx: IRContext, node: ASTNode) -> IRValue {
+    let result = new_value(ctx, "const")
+    ctx.module.constants.push(IRConstant {
+        value: node.value,
+        type: Type { kind: "Bool", name: "Bool", params: [], is_owned: false, trait_bounds: [] }
+    })
+    add_instruction(ctx, make_instr_result(ctx, OP_CONST,
+        [IROperand {
+            value: IRValue { kind: "constant", data: (ctx.module.constants.len - 1).to_string() },
+            type: Type { kind: "Any", name: "Any", params: [], is_owned: false, trait_bounds: [] }
+        }],
+        result, node.line, node.column))
+    return result
+}
+
 fn lower_binary_op(ctx: IRContext, node: ASTNode) -> IRValue {
-    let left = lower_expression(ctx, node.children[0])
+    let left  = lower_expression(ctx, node.children[0])
     let right = lower_expression(ctx, node.children[1])
-    let op = node.value
-    
+    let op    = node.value
+
     let opcode = match op {
-        "+" => OP_ADD
-        "-" => OP_SUB
-        "*" => OP_MUL
-        "/" => OP_DIV
-        "%" => OP_MOD
+        "+"  => OP_ADD
+        "-"  => OP_SUB
+        "*"  => OP_MUL
+        "/"  => OP_DIV
+        "%"  => OP_MOD
         "==" => OP_EQ
         "!=" => OP_NEQ
-        "<" => OP_LT
-        ">" => OP_GT
+        "<"  => OP_LT
+        ">"  => OP_GT
         "<=" => OP_LTE
         ">=" => OP_GTE
         "&&" => OP_AND
         "||" => OP_OR
-        _ => OP_ADD
+        _    => OP_ADD
     }
-    
+
     let result = new_value(ctx, "binop")
-    add_instruction(ctx, IRInstruction {
-        id: next_id(ctx),
-        opcode: opcode,
-        operands: [
-            IROperand { value: left, type: Type { kind: "Any", name: "Any", params: [] } },
-            IROperand { value: right, type: Type { kind: "Any", name: "Any", params: [] } }
+    add_instruction(ctx, make_instr_result(ctx, opcode,
+        [
+            IROperand { value: left,  type: Type { kind: "Any", name: "Any", params: [], is_owned: false, trait_bounds: [] } },
+            IROperand { value: right, type: Type { kind: "Any", name: "Any", params: [], is_owned: false, trait_bounds: [] } }
         ],
-        result: Option[IRValue].Some(result),
-        line: node.line,
-        column: node.column
-    })
-    
+        result, node.line, node.column))
     return result
 }
 
 fn lower_unary_op(ctx: IRContext, node: ASTNode) -> IRValue {
     let operand = lower_expression(ctx, node.children[0])
-    let op = node.value
-    
-    let opcode = match op {
+    let op      = node.value
+    let opcode  = match op {
         "-" => OP_NEG
         "!" => OP_NOT
-        _ => OP_NEG
+        _   => OP_NEG
     }
-    
+
     let result = new_value(ctx, "unop")
-    add_instruction(ctx, IRInstruction {
-        id: next_id(ctx),
-        opcode: opcode,
-        operands: [IROperand {
-            value: operand,
-            type: Type { kind: "Any", name: "Any", params: [] }
-        }],
-        result: Option[IRValue].Some(result),
-        line: node.line,
-        column: node.column
-    })
-    
+    add_instruction(ctx, make_instr_result(ctx, opcode,
+        [IROperand { value: operand, type: Type { kind: "Any", name: "Any", params: [], is_owned: false, trait_bounds: [] } }],
+        result, node.line, node.column))
     return result
 }
 
 fn lower_call(ctx: IRContext, node: ASTNode) -> IRValue {
     let callee = lower_expression(ctx, node.children[0])
-    let args = node.children[1]
-    
-    let arg_values = []
-    for arg in args.children {
-        arg_values.push(lower_expression(ctx, arg))
-    }
-    
+    let args   = node.children[1]
+
     let operands = [IROperand {
         value: callee,
-        type: Type { kind: "Function", name: "Function", params: [] }
+        type: Type { kind: "Function", name: "Function", params: [], is_owned: false, trait_bounds: [] }
     }]
-    
-    for arg in arg_values {
+
+    for arg in args.children {
+        let arg_val = lower_expression(ctx, arg)
         operands.push(IROperand {
-            value: arg,
-            type: Type { kind: "Any", name: "Any", params: [] }
+            value: arg_val,
+            type: Type { kind: "Any", name: "Any", params: [], is_owned: false, trait_bounds: [] }
         })
     }
-    
+
     let result = new_value(ctx, "call")
     add_instruction(ctx, IRInstruction {
-        id: next_id(ctx),
-        opcode: OP_CALL,
-        operands: operands,
-        result: Option[IRValue].Some(result),
-        line: node.line,
-        column: node.column
+        id:         next_id(ctx),
+        opcode:     OP_CALL,
+        operands:   operands,
+        result:     Option[IRValue].Some(result),
+        line:       node.line,
+        column:     node.column,
+        ffi_wasm:   false,
+        ffi_js:     false,
+        debug_name: ""
     })
-    
     return result
 }
 
 fn lower_field_access(ctx: IRContext, node: ASTNode) -> IRValue {
     let object = lower_expression(ctx, node.children[0])
-    let field = node.value
-    
+    let field  = node.value
+
     let result = new_value(ctx, "field")
-    add_instruction(ctx, IRInstruction {
-        id: next_id(ctx),
-        opcode: OP_GET_FIELD,
-        operands: [
-            IROperand { value: object, type: Type { kind: "Any", name: "Any", params: [] } },
-            IROperand { value: IRValue { kind: "string", data: field }, type: Type { kind: "String", name: "String", params: [] } }
+    add_instruction(ctx, make_instr_result(ctx, OP_GET_FIELD,
+        [
+            IROperand { value: object, type: Type { kind: "Any", name: "Any", params: [], is_owned: false, trait_bounds: [] } },
+            IROperand { value: IRValue { kind: "string", data: field }, type: Type { kind: "String", name: "String", params: [], is_owned: false, trait_bounds: [] } }
         ],
-        result: Option[IRValue].Some(result),
-        line: node.line,
-        column: node.column
-    })
-    
+        result, node.line, node.column))
     return result
 }
 
@@ -857,71 +2148,105 @@ fn lower_array_literal(ctx: IRContext, node: ASTNode) -> IRValue {
     for elem in node.children {
         elem_values.push(lower_expression(ctx, elem))
     }
-    
-    let result = new_value(ctx, "array")
-    
-    // Allocate array
+
     let alloc_result = new_value(ctx, "ptr")
-    add_instruction(ctx, IRInstruction {
-        id: next_id(ctx),
-        opcode: OP_ALLOC,
-        operands: [IROperand {
+    add_instruction(ctx, make_instr_result(ctx, OP_ALLOC,
+        [IROperand {
             value: IRValue { kind: "size", data: (node.children.len * 8).to_string() },
-            type: Type { kind: "Int", name: "Int", params: [] }
+            type: Type { kind: "Int", name: "Int", params: [], is_owned: false, trait_bounds: [] }
         }],
-        result: Option[IRValue].Some(alloc_result),
-        line: node.line,
-        column: node.column
-    })
-    
-    // Store elements
+        alloc_result, node.line, node.column))
+
     for i in 0..elem_values.len {
-        add_instruction(ctx, IRInstruction {
-            id: next_id(ctx),
-            opcode: OP_SET_ELEM,
-            operands: [
-                IROperand { value: alloc_result, type: Type { kind: "Ptr", name: "Ptr", params: [] } },
-                IROperand { value: IRValue { kind: "index", data: i.to_string() }, type: Type { kind: "Int", name: "Int", params: [] } },
-                IROperand { value: elem_values[i], type: Type { kind: "Any", name: "Any", params: [] } }
+        add_instruction(ctx, make_instr(ctx, OP_SET_ELEM,
+            [
+                IROperand { value: alloc_result,     type: Type { kind: "Ptr", name: "Ptr", params: [], is_owned: false, trait_bounds: [] } },
+                IROperand { value: IRValue { kind: "index", data: i.to_string() }, type: Type { kind: "Int", name: "Int", params: [], is_owned: false, trait_bounds: [] } },
+                IROperand { value: elem_values[i],   type: Type { kind: "Any", name: "Any", params: [], is_owned: false, trait_bounds: [] } }
             ],
-            result: Option[IRValue].None,
-            line: node.line,
-            column: node.column
-        })
+            Option[IRValue].None, node.line, node.column))
     }
-    
+
     return alloc_result
 }
 
 fn resolve_type(node: ASTNode) -> Type {
     if node == null {
-        return Type { kind: "Any", name: "Any", params: [] }
+        return Type { kind: "Any", name: "Any", params: [], is_owned: false, trait_bounds: [] }
     }
-    
+
     match node.type {
         "NamedType" => {
-            return Type { kind: "Named", name: node.value, params: [] }
+            return Type { kind: "Named", name: node.value, params: [], is_owned: false, trait_bounds: [] }
         }
         "ArrayType" => {
             let inner = resolve_type(node.children[0])
-            return Type { kind: "Array", name: "[]", params: [inner] }
+            return Type { kind: "Array", name: "[]", params: [inner], is_owned: false, trait_bounds: [] }
         }
         "FunctionType" => {
             let params = node.children[0]
             let return_type = resolve_type(node.children[1])
-            
             let param_types = []
             for param in params.children {
                 param_types.push(resolve_type(param))
             }
-            
-            return Type { kind: "Function", name: "->", params: param_types + [return_type] }
+            return Type { kind: "Function", name: "->", params: param_types + [return_type], is_owned: false, trait_bounds: [] }
+        }
+        "UnionType" => {
+            let variants = []
+            for child in node.children {
+                variants.push(resolve_type(child))
+            }
+            return Type { kind: "Union", name: node.value, params: variants, is_owned: false, trait_bounds: [] }
+        }
+        "TypeVar" => {
+            let bounds = []
+            for b in node.children {
+                bounds.push(b.value)
+            }
+            return Type { kind: "TypeVar", name: node.value, params: [], is_owned: false, trait_bounds: bounds }
         }
         _ => {
-            return Type { kind: "Any", name: "Any", params: [] }
+            return Type { kind: "Any", name: "Any", params: [], is_owned: false, trait_bounds: [] }
         }
     }
 }
+
+// ─────────────────────────────────────────────
+// Construtores auxiliares de instrução
+// ─────────────────────────────────────────────
+
+fn make_instr(ctx: IRContext, opcode: IROpcode, operands: [IROperand], result: Option[IRValue], line: int, column: int) -> IRInstruction {
+    return IRInstruction {
+        id:         next_id(ctx),
+        opcode:     opcode,
+        operands:   operands,
+        result:     result,
+        line:       line,
+        column:     column,
+        ffi_wasm:   false,
+        ffi_js:     false,
+        debug_name: ""
+    }
+}
+
+fn make_instr_result(ctx: IRContext, opcode: IROpcode, operands: [IROperand], result_val: IRValue, line: int, column: int) -> IRInstruction {
+    return IRInstruction {
+        id:         next_id(ctx),
+        opcode:     opcode,
+        operands:   operands,
+        result:     Option[IRValue].Some(result_val),
+        line:       line,
+        column:     column,
+        ffi_wasm:   false,
+        ffi_js:     false,
+        debug_name: ""
+    }
+}
+
+// ─────────────────────────────────────────────
+// Infraestrutura de contexto (existente, adaptada)
+// ─────────────────────────────────────────────
 
 fn new_value(ctx: IRContext, kind: string) -> IRValue {
     let id = ctx.value_counter
@@ -933,7 +2258,7 @@ fn new_block(ctx: IRContext) -> string {
     let id = ctx.block_counter
     ctx.block_counter = ctx.block_counter + 1
     let label = "block_" + id.to_string()
-    
+
     match ctx.current_function {
         Option[string].Some(func_name) => {
             let func = ctx.module.functions[func_name]
@@ -946,7 +2271,7 @@ fn new_block(ctx: IRContext) -> string {
         }
         Option[string].None => {}
     }
-    
+
     return label
 }
 
@@ -975,98 +2300,11 @@ fn next_id(ctx: IRContext) -> int {
     return id
 }
 
-// IR optimizations
+// ─────────────────────────────────────────────
+// IR optimizations (stubs)
+// ─────────────────────────────────────────────
+
 fn optimize_ir(module: IRModule) -> IRModule {
-    let optimized = module
-    
-    // Apply optimizations
-    optimized = constant_propagation(optimized)
-    optimized = dead_code_elimination_ir(optimized)
-    optimized = common_subexpression_elimination(optimized)
-    
-    return optimized
-}
-
-fn constant_propagation(module: IRModule) -> IRModule {
-    // Propagate constant values through the IR
+    // Placeholder para otimizações futuras (peephole, DCE, etc.)
     return module
-}
-
-fn dead_code_elimination_ir(module: IRModule) -> IRModule {
-    // Remove dead code from IR
-    return module
-}
-
-fn common_subexpression_elimination(module: IRModule) -> IRModule {
-    // Eliminate common subexpressions
-    return module
-}
-
-// IR to string conversion for debugging
-fn ir_to_string(module: IRModule) -> string {
-    let result = "Module: " + module.name + "\n\n"
-    
-    for (func_name, func) in module.functions {
-        result = result + "fn " + func_name + "("
-        
-        for i in 0..func.params.len {
-            if i > 0 { result = result + ", " }
-            result = result + func.params[i].name + ": " + type_to_string(func.params[i].type)
-        }
-        
-        result = result + ") -> " + type_to_string(func.return_type) + " {\n"
-        
-        for (block_label, block) in func.blocks {
-            result = result + "  " + block_label + ":\n"
-            
-            for instr in block.instructions {
-                result = result + "    " + instr.id.to_string() + ": " + instr.opcode.name
-                
-                for operand in instr.operands {
-                    result = result + " " + ir_value_to_string(operand.value)
-                }
-                
-                match instr.result {
-                    Option[IRValue].Some(res) => {
-                        result = result + " -> " + ir_value_to_string(res)
-                    }
-                    Option[IRValue].None => {}
-                }
-                
-                result = result + "\n"
-            }
-        }
-        
-        result = result + "}\n\n"
-    }
-    
-    return result
-}
-
-fn type_to_string(t: Type) -> string {
-    match t.kind {
-        "Int" => return "Int"
-        "Float" => return "Float"
-        "String" => return "String"
-        "Bool" => return "Bool"
-        "Any" => return "Any"
-        "Array" => return "[" + type_to_string(t.params[0]) + "]"
-        "Function" => {
-            let params = t.params.slice(0, t.params.len - 1)
-            let return_type = t.params[t.params.len - 1]
-            let param_str = params.map(p => type_to_string(p)).join(", ")
-            return "(" + param_str + ") -> " + type_to_string(return_type)
-        }
-        "Named" => {
-            if t.params.len > 0 {
-                return t.name + "<" + t.params.map(p => type_to_string(p)).join(", ") + ">"
-            }
-            return t.name
-        }
-        _ => return t.kind
-    }
-}
-
-fn ir_value_to_string(v: IRValue) -> string {
-    return v.kind + ":" + v.data
 }

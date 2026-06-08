@@ -1,0 +1,892 @@
+module compiler.tests.ir_ssa_test
+
+import compiler.ir
+import compiler.error_reporter
+
+/// Testes do IR_Generator com SSA e Monomorphization
+/// Cobre: Property P1, P2, P7 + testes unitários
+/// Requisitos: 1.1, 1.2, 1.3, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 3.5, 3.6
+
+// ─────────────────────────────────────────────
+// Geradores para Property-Based Testing
+// ─────────────────────────────────────────────
+
+/// Gera um tipo IR aleatório simples
+fn gen_simple_type(seed: int) -> Type {
+    let kinds = ["Int", "Float", "String", "Bool", "Unit"]
+    let idx = seed % kinds.len
+    let k = kinds[idx]
+    return Type {
+        kind: k,
+        name: k,
+        params: [],
+        is_owned: false,
+        trait_bounds: []
+    }
+}
+
+/// Gera um IRValue aleatório
+fn gen_ir_value(seed: int) -> IRValue {
+    let kinds = ["identifier", "const", "binop", "call"]
+    let idx = seed % kinds.len
+    return IRValue {
+        kind: kinds[idx],
+        data: kinds[idx] + "_" + seed.to_string()
+    }
+}
+
+/// Gera uma IRInstruction válida com id único
+fn gen_ir_instruction(id: int, seed: int) -> IRInstruction {
+    let opcodes = [OP_ADD, OP_SUB, OP_CONST, OP_LOAD, OP_STORE, OP_RET,
+                   OP_UNION_TAG, OP_UNION_ACCESS]
+    let op_idx = seed % opcodes.len
+    let opcode = opcodes[op_idx]
+
+    let has_result = (seed % 3) != 0
+    let result_val = if has_result {
+        Option[IRValue].Some(IRValue { kind: "val", data: "v_" + id.to_string() + "_" + seed.to_string() })
+    } else {
+        Option[IRValue].None
+    }
+
+    return IRInstruction {
+        id:         id,
+        opcode:     opcode,
+        operands:   [],
+        result:     result_val,
+        line:       seed % 100 + 1,
+        column:     seed % 80 + 1,
+        ffi_wasm:   (seed % 7) == 0,
+        ffi_js:     (seed % 11) == 0,
+        debug_name: "instr_" + id.to_string()
+    }
+}
+
+/// Gera um IRBlock com N instruções
+fn gen_ir_block(label: string, n_instrs: int, seed: int) -> IRBlock {
+    let instrs = []
+    for i in 0..n_instrs {
+        instrs.push(gen_ir_instruction(seed * 100 + i, seed + i))
+    }
+    return IRBlock {
+        label:        label,
+        instructions: instrs,
+        predecessors: [],
+        successors:   []
+    }
+}
+
+/// Gera uma IRFunction com 1–3 blocos
+fn gen_ir_function(name: string, seed: int) -> IRFunction {
+    let n_blocks = (seed % 3) + 1
+    let blocks = dict()
+    let entry_label = "block_0"
+
+    for i in 0..n_blocks {
+        let label = "block_" + i.to_string()
+        let n_instrs = (seed + i) % 4 + 1
+        blocks[label] = gen_ir_block(label, n_instrs, seed + i * 13)
+    }
+
+    return IRFunction {
+        name:         name,
+        params:       [],
+        return_type:  Type { kind: "Int", name: "Int", params: [], is_owned: false, trait_bounds: [] },
+        blocks:       blocks,
+        entry_block:  entry_label
+    }
+}
+
+/// Gera um IRModule válido com 1–4 funções
+fn gen_valid_ir_module(seed: int) -> IRModule {
+    let n_funcs = (seed % 4) + 1
+    let functions = dict()
+    let constants = []
+
+    for i in 0..n_funcs {
+        let fname = "func_" + i.to_string() + "_" + seed.to_string()
+        functions[fname] = gen_ir_function(fname, seed + i * 17)
+    }
+
+    // Adiciona algumas constantes
+    let n_consts = (seed % 3) + 1
+    for i in 0..n_consts {
+        constants.push(IRConstant {
+            value: (seed + i).to_string(),
+            type: gen_simple_type(seed + i)
+        })
+    }
+
+    return IRModule {
+        name:      "module_" + seed.to_string(),
+        functions: functions,
+        globals:   dict(),
+        constants: constants
+    }
+}
+
+/// Gera um ASTNode simples de função
+fn gen_simple_function_ast(name: string, seed: int) -> ASTNode {
+    let params_node = ASTNode {
+        type: "Parameters",
+        value: "",
+        children: [],
+        line: 1,
+        column: 1
+    }
+
+    let ret_type_node = ASTNode {
+        type: "NamedType",
+        value: "Int",
+        children: [],
+        line: 1,
+        column: 10
+    }
+
+    // Corpo simples: retorna uma constante
+    let num_value = (seed % 100).to_string()
+    let const_node = ASTNode {
+        type: "NumberLiteral",
+        value: num_value,
+        children: [],
+        line: 2,
+        column: 5
+    }
+
+    let return_node = ASTNode {
+        type: "Return",
+        value: "",
+        children: [const_node],
+        line: 2,
+        column: 1
+    }
+
+    let body_node = ASTNode {
+        type: "Block",
+        value: "",
+        children: [return_node],
+        line: 1,
+        column: 20
+    }
+
+    return ASTNode {
+        type: "Function",
+        value: name,
+        children: [params_node, ret_type_node, body_node],
+        line: 1,
+        column: 1
+    }
+}
+
+/// Gera um IRModule com SSA property (todos os IRValues definidos exatamente uma vez)
+fn gen_ssa_ir_function(name: string, seed: int) -> IRFunction {
+    let blocks = dict()
+    let entry_label = "block_0"
+    let n_instrs = (seed % 5) + 2
+
+    let instrs = []
+    for i in 0..n_instrs {
+        // Cada instrução tem resultado único (garantia SSA)
+        let unique_id = seed * 1000 + i
+        let result_val = Option[IRValue].Some(IRValue {
+            kind: "val",
+            data: "v_unique_" + unique_id.to_string()
+        })
+        instrs.push(IRInstruction {
+            id:         unique_id,
+            opcode:     OP_ADD,
+            operands:   [],
+            result:     result_val,
+            line:       i + 1,
+            column:     1,
+            ffi_wasm:   false,
+            ffi_js:     false,
+            debug_name: "add_" + i.to_string()
+        })
+    }
+
+    // Instrução de retorno sem resultado
+    instrs.push(IRInstruction {
+        id:         seed * 1000 + n_instrs,
+        opcode:     OP_RET,
+        operands:   [],
+        result:     Option[IRValue].None,
+        line:       n_instrs + 1,
+        column:     1,
+        ffi_wasm:   false,
+        ffi_js:     false,
+        debug_name: "ret"
+    })
+
+    blocks[entry_label] = IRBlock {
+        label:        entry_label,
+        instructions: instrs,
+        predecessors: [],
+        successors:   []
+    }
+
+    return IRFunction {
+        name:         name,
+        params:       [],
+        return_type:  Type { kind: "Int", name: "Int", params: [], is_owned: false, trait_bounds: [] },
+        blocks:       blocks,
+        entry_block:  entry_label
+    }
+}
+
+// ─────────────────────────────────────────────
+// Property P1 — Round-trip do IRModule (100 iterações)
+// Validates: Requirements 1.9
+// ─────────────────────────────────────────────
+
+/// **Validates: Requirements 1.9**
+/// Property 1: IRModule serialization round-trip
+/// Para qualquer IRModule M, serialize(M) seguido de deserialize deve produzir
+/// um módulo estruturalmente equivalente.
+fn test_p1_ir_module_round_trip() -> bool {
+    // Feature: seed-language-advanced-features, Property 1: IRModule serialization round-trip
+    let iterations = 100
+    let passed = 0
+
+    for i in 0..iterations {
+        let seed = i * 31 + 7
+        let m = gen_valid_ir_module(seed)
+
+        let serialized   = serialize_ir_module(m)
+        let deserialized = deserialize_ir_module(serialized)
+
+        if ir_modules_equivalent(m, deserialized) {
+            passed = passed + 1
+        } else {
+            io.stderr.write("[P1 FAIL] seed=" + seed.to_string() +
+                " module=" + m.name + "\n")
+            io.stderr.write("  serialized: " + serialized.slice(0, 200) + "\n")
+            return false
+        }
+    }
+
+    io.stdout.write("[P1 PASS] IRModule round-trip: " + passed.to_string() + "/100 iterations\n")
+    return true
+}
+
+// ─────────────────────────────────────────────
+// Property P2 — SSA single assignment (200 iterações)
+// Validates: Requirements 1.2
+// ─────────────────────────────────────────────
+
+/// **Validates: Requirements 1.2**
+/// Property 2: SSA single assignment
+/// Para qualquer IRFunction gerada, nenhum IRValue.data deve aparecer em `result`
+/// de mais de uma instrução.
+fn test_p2_ssa_single_assignment() -> bool {
+    // Feature: seed-language-advanced-features, Property 2: SSA single assignment
+    let iterations = 200
+    let passed = 0
+
+    for i in 0..iterations {
+        let seed = i * 37 + 13
+        let func = gen_ssa_ir_function("test_ssa_" + i.to_string(), seed)
+
+        if has_ssa_property(func) {
+            passed = passed + 1
+        } else {
+            io.stderr.write("[P2 FAIL] SSA violation in func seed=" + seed.to_string() + "\n")
+            return false
+        }
+    }
+
+    // Testa também funções geradas via AST lowering
+    for i in 0..50 {
+        let seed = i * 41 + 19
+        let func_name = "ast_func_" + i.to_string()
+        let ast = gen_simple_function_ast(func_name, seed)
+        let ctx = ir_context("test_module")
+        lower_function(ctx, ast)
+
+        if ctx.module.functions.has(func_name) {
+            let func = ctx.module.functions[func_name]
+            // Verifica SSA antes de build_ssa (lowering básico pode ter múltiplas defs)
+            // Após build_ssa deve satisfazer a propriedade
+            let ssa_func = build_ssa(ctx, func)
+            if has_ssa_property(ssa_func) {
+                passed = passed + 1
+            } else {
+                io.stderr.write("[P2 FAIL] SSA violation after build_ssa seed=" + seed.to_string() + "\n")
+                return false
+            }
+        }
+    }
+
+    io.stdout.write("[P2 PASS] SSA single assignment: " + passed.to_string() + "/250 iterations\n")
+    return true
+}
+
+// ─────────────────────────────────────────────
+// Property P7 — Monomorphization deduplication (100 iterações)
+// Validates: Requirements 3.6
+// ─────────────────────────────────────────────
+
+/// Constrói uma IRFunction genérica de identidade: fn identity[T](x: T) -> T
+fn build_generic_identity_func(name: string) -> IRFunction {
+    let t_param = IRParam {
+        name: "x",
+        type: Type { kind: "TypeVar", name: "T", params: [], is_owned: false, trait_bounds: [] }
+    }
+
+    let blocks = dict()
+    let entry = "block_0"
+    let ret_val = IRValue { kind: "identifier", data: "x" }
+    let ret_instr = IRInstruction {
+        id:         0,
+        opcode:     OP_RET,
+        operands:   [IROperand {
+            value: ret_val,
+            type: Type { kind: "TypeVar", name: "T", params: [], is_owned: false, trait_bounds: [] }
+        }],
+        result:     Option[IRValue].None,
+        line:       1,
+        column:     1,
+        ffi_wasm:   false,
+        ffi_js:     false,
+        debug_name: "ret"
+    }
+
+    blocks[entry] = IRBlock {
+        label:        entry,
+        instructions: [ret_instr],
+        predecessors: [],
+        successors:   []
+    }
+
+    return IRFunction {
+        name:         name,
+        params:       [t_param],
+        return_type:  Type { kind: "TypeVar", name: "T", params: [], is_owned: false, trait_bounds: [] },
+        blocks:       blocks,
+        entry_block:  entry
+    }
+}
+
+/// **Validates: Requirements 3.6**
+/// Property 7: Monomorphization deduplication
+/// Para quaisquer dois call sites com os mesmos type args, o IRModule deve
+/// conter exatamente uma função monomorfa com o nome mangled.
+fn test_p7_monomorphization_deduplication() -> bool {
+    // Feature: seed-language-advanced-features, Property 7: Monomorphization deduplication
+    let iterations = 100
+    let passed = 0
+
+    let type_options = [
+        Type { kind: "Int",    name: "Int",    params: [], is_owned: false, trait_bounds: [] },
+        Type { kind: "Float",  name: "Float",  params: [], is_owned: false, trait_bounds: [] },
+        Type { kind: "String", name: "String", params: [], is_owned: false, trait_bounds: [] },
+        Type { kind: "Bool",   name: "Bool",   params: [], is_owned: false, trait_bounds: [] }
+    ]
+
+    for i in 0..iterations {
+        let type_idx = i % type_options.len
+        let concrete_type = type_options[type_idx]
+
+        let ctx   = ir_context("mono_test_" + i.to_string())
+        let cache = new_mono_cache()
+        let generic_func = build_generic_identity_func("identity")
+
+        let type_args = [concrete_type]
+        let mangled   = mangle_name("identity", type_args)
+
+        // Dois call sites com os mesmos type args
+        let inst1 = monomorphize(ctx, cache, generic_func, type_args)
+        let inst2 = monomorphize(ctx, cache, generic_func, type_args)
+
+        // Deve ser a mesma instância (deduplicação)
+        if inst1.name != inst2.name {
+            io.stderr.write("[P7 FAIL] Different instances returned for same type args, seed=" + i.to_string() + "\n")
+            return false
+        }
+
+        // Deve existir exatamente UMA função com o nome mangled no módulo
+        let count = 0
+        for fname in ctx.module.functions.keys() {
+            if fname == mangled {
+                count = count + 1
+            }
+        }
+
+        if count == 1 {
+            passed = passed + 1
+        } else {
+            io.stderr.write("[P7 FAIL] Expected 1 monomorphized function, got " + count.to_string() +
+                " for mangled=" + mangled + "\n")
+            return false
+        }
+    }
+
+    io.stdout.write("[P7 PASS] Monomorphization deduplication: " + passed.to_string() + "/100 iterations\n")
+    return true
+}
+
+// ─────────────────────────────────────────────
+// Testes Unitários
+// ─────────────────────────────────────────────
+
+/// Teste unitário: Union type ASTNode → OP_UNION_TAG + OP_UNION_ACCESS
+/// Validates: Requirements 1.3
+fn test_unit_union_type_lowering() -> bool {
+    let ctx = ir_context("union_test")
+
+    // Cria um ASTNode de UnionValue (Shape.Circle)
+    let inner_node = ASTNode {
+        type: "NumberLiteral",
+        value: "42",
+        children: [],
+        line: 1,
+        column: 10
+    }
+
+    let union_val_node = ASTNode {
+        type: "UnionValue",
+        value: "Circle",
+        children: [inner_node],
+        line: 1,
+        column: 1
+    }
+
+    // Cria um contexto com função ativa
+    ctx.current_function = Option[string].Some("test_fn")
+    ctx.module.functions["test_fn"] = IRFunction {
+        name:         "test_fn",
+        params:       [],
+        return_type:  Type { kind: "Any", name: "Any", params: [], is_owned: false, trait_bounds: [] },
+        blocks:       dict(),
+        entry_block:  "block_0"
+    }
+    ctx.module.functions["test_fn"].blocks["block_0"] = IRBlock {
+        label:        "block_0",
+        instructions: [],
+        predecessors: [],
+        successors:   []
+    }
+    ctx.current_block = Option[string].Some("block_0")
+
+    // Executa lowering
+    let result = lower_expression(ctx, union_val_node)
+
+    // Verifica instruções geradas
+    let func = ctx.module.functions["test_fn"]
+    let block = func.blocks["block_0"]
+    let instrs = block.instructions
+
+    // Deve ter pelo menos: OP_CONST (42), OP_UNION_TAG, OP_UNION_ACCESS
+    let has_union_tag    = false
+    let has_union_access = false
+
+    for instr in instrs {
+        if instr.opcode.name == "union_tag"    { has_union_tag = true }
+        if instr.opcode.name == "union_access" { has_union_access = true }
+    }
+
+    if !has_union_tag {
+        io.stderr.write("[FAIL] test_unit_union_type_lowering: OP_UNION_TAG não encontrado\n")
+        return false
+    }
+    if !has_union_access {
+        io.stderr.write("[FAIL] test_unit_union_type_lowering: OP_UNION_ACCESS não encontrado\n")
+        return false
+    }
+
+    io.stdout.write("[PASS] test_unit_union_type_lowering: OP_UNION_TAG + OP_UNION_ACCESS gerados\n")
+    return true
+}
+
+/// Teste unitário: closure com 2 upvalues → OP_CAPTURE × 2 + OP_MAKE_CLOSURE
+/// Validates: Requirements 1.6
+fn test_unit_closure_two_upvalues() -> bool {
+    let ctx = ir_context("closure_test")
+
+    // Cria ASTNode de Closure que captura 2 variáveis
+    let capture1 = ASTNode {
+        type: "Capture",
+        value: "x",
+        children: [],
+        line: 1,
+        column: 5
+    }
+    let capture2 = ASTNode {
+        type: "Capture",
+        value: "y",
+        children: [],
+        line: 1,
+        column: 8
+    }
+
+    let closure_node = ASTNode {
+        type: "Closure",
+        value: "my_closure",
+        children: [capture1, capture2],
+        line: 1,
+        column: 1
+    }
+
+    // Cria contexto com função ativa
+    ctx.current_function = Option[string].Some("test_fn")
+    ctx.module.functions["test_fn"] = IRFunction {
+        name:         "test_fn",
+        params:       [],
+        return_type:  Type { kind: "Any", name: "Any", params: [], is_owned: false, trait_bounds: [] },
+        blocks:       dict(),
+        entry_block:  "block_0"
+    }
+    ctx.module.functions["test_fn"].blocks["block_0"] = IRBlock {
+        label:        "block_0",
+        instructions: [],
+        predecessors: [],
+        successors:   []
+    }
+    ctx.current_block = Option[string].Some("block_0")
+
+    let result = lower_expression(ctx, closure_node)
+
+    let func  = ctx.module.functions["test_fn"]
+    let block = func.blocks["block_0"]
+    let instrs = block.instructions
+
+    let capture_count = 0
+    let has_make_closure = false
+
+    for instr in instrs {
+        if instr.opcode.name == "capture"      { capture_count = capture_count + 1 }
+        if instr.opcode.name == "make_closure" { has_make_closure = true }
+    }
+
+    if capture_count != 2 {
+        io.stderr.write("[FAIL] test_unit_closure_two_upvalues: esperado 2 OP_CAPTURE, obtido " +
+            capture_count.to_string() + "\n")
+        return false
+    }
+    if !has_make_closure {
+        io.stderr.write("[FAIL] test_unit_closure_two_upvalues: OP_MAKE_CLOSURE não encontrado\n")
+        return false
+    }
+
+    io.stdout.write("[PASS] test_unit_closure_two_upvalues: OP_CAPTURE×2 + OP_MAKE_CLOSURE\n")
+    return true
+}
+
+/// Teste unitário: Trait vtable → IRConstant com entries de função
+/// Validates: Requirements 1.5
+fn test_unit_trait_vtable() -> bool {
+    // Simula uma vtable para um Trait com 2 métodos
+    let method1 = IRConstant {
+        value: "format",
+        type: Type { kind: "Function", name: "->", params: [], is_owned: false, trait_bounds: [] }
+    }
+    let method2 = IRConstant {
+        value: "to_string",
+        type: Type { kind: "Function", name: "->", params: [], is_owned: false, trait_bounds: [] }
+    }
+
+    let ctx = ir_context("vtable_test")
+    ctx.module.constants.push(method1)
+    ctx.module.constants.push(method2)
+
+    // Verifica que as 2 entradas da vtable estão presentes
+    let vtable_entries = 0
+    for c in ctx.module.constants {
+        if c.type.kind == "Function" {
+            vtable_entries = vtable_entries + 1
+        }
+    }
+
+    if vtable_entries != 2 {
+        io.stderr.write("[FAIL] test_unit_trait_vtable: esperado 2 entries, obtido " +
+            vtable_entries.to_string() + "\n")
+        return false
+    }
+
+    io.stdout.write("[PASS] test_unit_trait_vtable: IRConstant com 2 entries de função\n")
+    return true
+}
+
+/// Teste unitário: flag --debug → representação textual emitida
+/// Validates: Requirements 1.10
+fn test_unit_debug_flag() -> bool {
+    let ctx = ir_context_debug("debug_test")
+
+    // Adiciona uma função simples
+    let func_ast = gen_simple_function_ast("my_func", 42)
+    lower_function(ctx, func_ast)
+
+    // Emite representação textual
+    let text = emit_ir_text(ctx.module)
+
+    if !text.contains("fn my_func") {
+        io.stderr.write("[FAIL] test_unit_debug_flag: representação textual não contém 'fn my_func'\n")
+        io.stderr.write("  text: " + text.slice(0, 300) + "\n")
+        return false
+    }
+
+    if !text.contains("IRModule: debug_test") {
+        io.stderr.write("[FAIL] test_unit_debug_flag: representação textual não contém header do módulo\n")
+        return false
+    }
+
+    io.stdout.write("[PASS] test_unit_debug_flag: representação textual emitida corretamente\n")
+    return true
+}
+
+/// Teste unitário: ASTNode sem lowering → SEED010 com linha/coluna
+/// Validates: Requirements 1.8
+fn test_unit_seed010_unknown_node() -> bool {
+    let ctx = ir_context("seed010_test")
+
+    // Cria um ASTNode de tipo desconhecido
+    let unknown_node = ASTNode {
+        type: "UnknownSyntaxNode",
+        value: "weird_thing",
+        children: [],
+        line: 42,
+        column: 7
+    }
+
+    // Chama lower_module com um nó desconhecido
+    lower_module(ctx, unknown_node)
+
+    // Verifica se SEED010 foi emitido
+    if ctx.diagnostics.len == 0 {
+        io.stderr.write("[FAIL] test_unit_seed010_unknown_node: nenhum Diagnostic emitido\n")
+        return false
+    }
+
+    let seed010_found = false
+    for d in ctx.diagnostics {
+        if d.code == "SEED010" {
+            seed010_found = true
+            // Verifica linha e coluna corretas
+            if d.location.line != 42 {
+                io.stderr.write("[FAIL] test_unit_seed010_unknown_node: linha esperada 42, obtida " +
+                    d.location.line.to_string() + "\n")
+                return false
+            }
+            if d.location.column != 7 {
+                io.stderr.write("[FAIL] test_unit_seed010_unknown_node: coluna esperada 7, obtida " +
+                    d.location.column.to_string() + "\n")
+                return false
+            }
+        }
+    }
+
+    if !seed010_found {
+        io.stderr.write("[FAIL] test_unit_seed010_unknown_node: Diagnostic SEED010 não encontrado\n")
+        return false
+    }
+
+    io.stdout.write("[PASS] test_unit_seed010_unknown_node: SEED010 emitido em linha=42, coluna=7\n")
+    return true
+}
+
+/// Teste unitário: mangle_name com tipos concretos
+/// Validates: Requirements 3.5
+fn test_unit_mangle_name() -> bool {
+    let int_type    = Type { kind: "Int",    name: "Int",    params: [], is_owned: false, trait_bounds: [] }
+    let string_type = Type { kind: "String", name: "String", params: [], is_owned: false, trait_bounds: [] }
+
+    // Caso 1: sem type args
+    let result1 = mangle_name("identity", [])
+    if result1 != "identity" {
+        io.stderr.write("[FAIL] test_unit_mangle_name: sem type args esperado 'identity', obtido '" +
+            result1 + "'\n")
+        return false
+    }
+
+    // Caso 2: um type arg
+    let result2 = mangle_name("identity", [int_type])
+    if result2 != "identity__Int" {
+        io.stderr.write("[FAIL] test_unit_mangle_name: um type arg esperado 'identity__Int', obtido '" +
+            result2 + "'\n")
+        return false
+    }
+
+    // Caso 3: dois type args
+    let result3 = mangle_name("map", [int_type, string_type])
+    if result3 != "map__Int__String" {
+        io.stderr.write("[FAIL] test_unit_mangle_name: dois type args esperado 'map__Int__String', obtido '" +
+            result3 + "'\n")
+        return false
+    }
+
+    io.stdout.write("[PASS] test_unit_mangle_name: mangle correto para 0, 1 e 2 type args\n")
+    return true
+}
+
+/// Teste unitário: serialize/deserialize de instrução com ffi_wasm=true
+/// Validates: Requirements 1.9 (campos ffi_wasm, ffi_js, debug_name)
+fn test_unit_instruction_ffi_roundtrip() -> bool {
+    let instr = IRInstruction {
+        id:         99,
+        opcode:     OP_CALL,
+        operands:   [],
+        result:     Option[IRValue].Some(IRValue { kind: "call", data: "result_wasm" }),
+        line:       10,
+        column:     5,
+        ffi_wasm:   true,
+        ffi_js:     false,
+        debug_name: "wasm_import_fn"
+    }
+
+    let func = IRFunction {
+        name:         "test_ffi",
+        params:       [],
+        return_type:  Type { kind: "Int", name: "Int", params: [], is_owned: false, trait_bounds: [] },
+        blocks:       dict(),
+        entry_block:  "block_0"
+    }
+
+    func.blocks["block_0"] = IRBlock {
+        label:        "block_0",
+        instructions: [instr],
+        predecessors: [],
+        successors:   []
+    }
+
+    let module = IRModule {
+        name:      "ffi_test",
+        functions: dict(),
+        globals:   dict(),
+        constants: []
+    }
+    module.functions["test_ffi"] = func
+
+    let serialized   = serialize_ir_module(module)
+    let deserialized = deserialize_ir_module(serialized)
+
+    if !ir_modules_equivalent(module, deserialized) {
+        io.stderr.write("[FAIL] test_unit_instruction_ffi_roundtrip: módulos não equivalentes\n")
+        io.stderr.write("  serialized: " + serialized.slice(0, 500) + "\n")
+        return false
+    }
+
+    // Verifica que ffi_wasm foi preservado
+    if deserialized.functions.has("test_ffi") {
+        let f = deserialized.functions["test_ffi"]
+        if f.blocks.has("block_0") {
+            let b = f.blocks["block_0"]
+            if b.instructions.len > 0 {
+                let i0 = b.instructions[0]
+                if !i0.ffi_wasm {
+                    io.stderr.write("[FAIL] test_unit_instruction_ffi_roundtrip: ffi_wasm não preservado\n")
+                    return false
+                }
+                if i0.debug_name != "wasm_import_fn" {
+                    io.stderr.write("[FAIL] test_unit_instruction_ffi_roundtrip: debug_name não preservado\n")
+                    return false
+                }
+            }
+        }
+    }
+
+    io.stdout.write("[PASS] test_unit_instruction_ffi_roundtrip: ffi_wasm e debug_name preservados no round-trip\n")
+    return true
+}
+
+/// Teste unitário: tipos estendidos (is_owned, trait_bounds) sobrevivem ao round-trip
+/// Validates: Requirements 1.9
+fn test_unit_extended_type_roundtrip() -> bool {
+    let owned_type = Type {
+        kind:         "Named",
+        name:         "MyStruct",
+        params:       [],
+        is_owned:     true,
+        trait_bounds: ["Display", "Serialize"]
+    }
+
+    let module = IRModule {
+        name:      "type_test",
+        functions: dict(),
+        globals:   dict(),
+        constants: [IRConstant { value: "dummy", type: owned_type }]
+    }
+
+    let serialized   = serialize_ir_module(module)
+    let deserialized = deserialize_ir_module(serialized)
+
+    if deserialized.constants.len == 0 {
+        io.stderr.write("[FAIL] test_unit_extended_type_roundtrip: constantes perdidas\n")
+        return false
+    }
+
+    let deser_type = deserialized.constants[0].type
+    if !deser_type.is_owned {
+        io.stderr.write("[FAIL] test_unit_extended_type_roundtrip: is_owned não preservado\n")
+        return false
+    }
+
+    if deser_type.trait_bounds.len != 2 {
+        io.stderr.write("[FAIL] test_unit_extended_type_roundtrip: trait_bounds não preservados (len=" +
+            deser_type.trait_bounds.len.to_string() + ")\n")
+        return false
+    }
+
+    io.stdout.write("[PASS] test_unit_extended_type_roundtrip: is_owned e trait_bounds preservados\n")
+    return true
+}
+
+/// Teste unitário: novos opcodes OP_UNION_TAG e OP_UNION_ACCESS definidos
+/// Validates: Requirements 1.3
+fn test_unit_union_opcodes_defined() -> bool {
+    if OP_UNION_TAG.name != "union_tag" {
+        io.stderr.write("[FAIL] test_unit_union_opcodes_defined: OP_UNION_TAG.name incorreto\n")
+        return false
+    }
+    if OP_UNION_TAG.kind != "union" {
+        io.stderr.write("[FAIL] test_unit_union_opcodes_defined: OP_UNION_TAG.kind incorreto\n")
+        return false
+    }
+    if OP_UNION_ACCESS.name != "union_access" {
+        io.stderr.write("[FAIL] test_unit_union_opcodes_defined: OP_UNION_ACCESS.name incorreto\n")
+        return false
+    }
+    if OP_UNION_ACCESS.kind != "union" {
+        io.stderr.write("[FAIL] test_unit_union_opcodes_defined: OP_UNION_ACCESS.kind incorreto\n")
+        return false
+    }
+
+    io.stdout.write("[PASS] test_unit_union_opcodes_defined: OP_UNION_TAG e OP_UNION_ACCESS corretos\n")
+    return true
+}
+
+// ─────────────────────────────────────────────
+// Runner principal
+// ─────────────────────────────────────────────
+
+fn run_all_tests() -> bool {
+    io.stdout.write("=== IR SSA Tests ===\n\n")
+
+    let all_passed = true
+
+    // Testes unitários
+    io.stdout.write("--- Testes Unitários ---\n")
+    if !test_unit_union_opcodes_defined()       { all_passed = false }
+    if !test_unit_union_type_lowering()          { all_passed = false }
+    if !test_unit_closure_two_upvalues()         { all_passed = false }
+    if !test_unit_trait_vtable()                 { all_passed = false }
+    if !test_unit_debug_flag()                   { all_passed = false }
+    if !test_unit_seed010_unknown_node()         { all_passed = false }
+    if !test_unit_mangle_name()                  { all_passed = false }
+    if !test_unit_instruction_ffi_roundtrip()    { all_passed = false }
+    if !test_unit_extended_type_roundtrip()      { all_passed = false }
+
+    // Property tests
+    io.stdout.write("\n--- Property Tests ---\n")
+    if !test_p1_ir_module_round_trip()           { all_passed = false }
+    if !test_p2_ssa_single_assignment()          { all_passed = false }
+    if !test_p7_monomorphization_deduplication() { all_passed = false }
+
+    io.stdout.write("\n")
+    if all_passed {
+        io.stdout.write("=== TODOS OS TESTES PASSARAM ===\n")
+    } else {
+        io.stdout.write("=== ALGUNS TESTES FALHARAM ===\n")
+    }
+
+    return all_passed
+}

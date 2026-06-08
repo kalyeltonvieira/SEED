@@ -1,0 +1,761 @@
+module compiler.error_reporter
+
+/// ErrorReporter — Módulo base de diagnósticos do compilador SEED
+/// Formata e emite Diagnostics com suporte a JSON, sublinhamento, diff unificado
+/// e agrupamento por localização.
+///
+/// Requisitos: 15.1, 15.2, 15.3, 15.4, 15.5, 15.6, 15.7
+
+// ─────────────────────────────────────────────
+// Tipos
+// ─────────────────────────────────────────────
+
+type Severity = {
+    level: string   // "error" | "warning" | "proposal"
+}
+
+type Location = {
+    file: string
+    line: int
+    column: int
+    end_line: int
+    end_column: int
+}
+
+type Diagnostic = {
+    code: string            // "SEEDXXX" ou "SEED_PKGXXX"
+    severity: Severity
+    location: Location
+    message: string
+    source_snippet: string
+    suggestion: string
+    related: [Diagnostic]
+    diff: Option[string]    // diff unificado quando suggestion é substituição pontual
+}
+
+// ─────────────────────────────────────────────
+// Constantes de severidade
+// ─────────────────────────────────────────────
+
+const SEVERITY_ERROR    = Severity { level: "error"    }
+const SEVERITY_WARNING  = Severity { level: "warning"  }
+const SEVERITY_PROPOSAL = Severity { level: "proposal" }
+
+// ─────────────────────────────────────────────
+// Construtores auxiliares
+// ─────────────────────────────────────────────
+
+fn location(file: string, line: int, column: int, end_line: int, end_column: int) -> Location {
+    return Location {
+        file: file,
+        line: line,
+        column: column,
+        end_line: end_line,
+        end_column: end_column
+    }
+}
+
+fn diagnostic(code: string, severity: Severity, loc: Location, message: string, snippet: string, suggestion: string) -> Diagnostic {
+    return Diagnostic {
+        code: code,
+        severity: severity,
+        location: loc,
+        message: message,
+        source_snippet: snippet,
+        suggestion: suggestion,
+        related: [],
+        diff: null
+    }
+}
+
+fn diagnostic_error(code: string, loc: Location, message: string, snippet: string, suggestion: string) -> Diagnostic {
+    return diagnostic(code, SEVERITY_ERROR, loc, message, snippet, suggestion)
+}
+
+fn diagnostic_warning(code: string, loc: Location, message: string, snippet: string, suggestion: string) -> Diagnostic {
+    return diagnostic(code, SEVERITY_WARNING, loc, message, snippet, suggestion)
+}
+
+fn diagnostic_proposal(code: string, loc: Location, message: string, snippet: string, suggestion: string) -> Diagnostic {
+    return diagnostic(code, SEVERITY_PROPOSAL, loc, message, snippet, suggestion)
+}
+
+// ─────────────────────────────────────────────
+// underline_source — sublinha o trecho com `^`
+// ─────────────────────────────────────────────
+
+/// Gera a linha de sublinhamento com `^` correspondendo ao intervalo
+/// [location.column, location.end_column) dentro do snippet fornecido.
+/// Usado apenas para Diagnostics de nível `error`.
+fn underline_source(snippet: string, loc: Location) -> string {
+    let col_start = loc.column
+    let col_end   = loc.end_column
+
+    // Garante limites válidos
+    if col_start < 0 {
+        col_start = 0
+    }
+    if col_end <= col_start {
+        col_end = col_start + 1
+    }
+
+    let padding = ""
+    for i in 0..col_start {
+        padding = padding + " "
+    }
+
+    let underline = ""
+    for i in col_start..col_end {
+        underline = underline + "^"
+    }
+
+    return padding + underline
+}
+
+// ─────────────────────────────────────────────
+// format_diagnostic — formata para texto legível
+// ─────────────────────────────────────────────
+
+/// Formata um Diagnostic para exibição no terminal.
+/// Para Diagnostics de nível `error`, inclui sublinhamento com `^`.
+/// Inclui diff unificado quando o campo `diff` está presente.
+/// Inclui Diagnostics secundários do campo `related`.
+///
+/// Requisitos: 15.1, 15.3, 15.6, 15.7
+fn format_diagnostic(d: Diagnostic) -> string {
+    let loc_str = d.location.file + ":" + d.location.line.to_string() + ":" + d.location.column.to_string()
+    let header  = "[" + d.severity.level.to_upper() + "] " + d.code + " " + loc_str + ": " + d.message
+
+    let lines = [header]
+
+    // Trecho de código-fonte
+    if d.source_snippet.len > 0 {
+        lines.push("  " + d.source_snippet)
+
+        // Sublinhamento apenas para errors (requisito 15.3)
+        if d.severity.level == "error" {
+            let underline = underline_source(d.source_snippet, d.location)
+            if underline.len > 0 {
+                lines.push("  " + underline)
+            }
+        }
+    }
+
+    // Campo suggestion
+    if d.suggestion.len > 0 {
+        lines.push("  suggestion: " + d.suggestion)
+    }
+
+    // Diff unificado quando disponível (requisito 15.6)
+    if d.diff != null {
+        lines.push("  diff:")
+        let diff_lines = d.diff.split("\n")
+        for dl in diff_lines {
+            lines.push("    " + dl)
+        }
+    }
+
+    // Diagnostics secundários (requisito 15.7)
+    if d.related.len > 0 {
+        lines.push("  related:")
+        for rel in d.related {
+            let rel_loc = rel.location.file + ":" + rel.location.line.to_string() + ":" + rel.location.column.to_string()
+            lines.push("    [" + rel.severity.level.to_upper() + "] " + rel.code + " " + rel_loc + ": " + rel.message)
+        }
+    }
+
+    return lines.join("\n")
+}
+
+// ─────────────────────────────────────────────
+// format_diagnostics_json — serialização JSON
+// ─────────────────────────────────────────────
+
+/// Serializa uma lista de Diagnostics para JSON, emitindo cada Diagnostic
+/// como um objeto JSON. Compatível com ferramentas de integração contínua.
+///
+/// Requisito: 15.5, 15.8
+fn format_diagnostics_json(diagnostics: [Diagnostic]) -> string {
+    let items = []
+    for d in diagnostics {
+        items.push(diagnostic_to_json_object(d))
+    }
+    return "[" + items.join(",") + "]"
+}
+
+fn diagnostic_to_json_object(d: Diagnostic) -> string {
+    let loc = location_to_json(d.location)
+
+    let related_items = []
+    for r in d.related {
+        related_items.push(diagnostic_to_json_object(r))
+    }
+    let related_json = "[" + related_items.join(",") + "]"
+
+    let diff_json = if d.diff == null {
+        "null"
+    } else {
+        json_string(d.diff)
+    }
+
+    return "{" +
+        "\"code\":"           + json_string(d.code)             + "," +
+        "\"severity\":"       + json_string(d.severity.level)   + "," +
+        "\"location\":"       + loc                              + "," +
+        "\"message\":"        + json_string(d.message)           + "," +
+        "\"source_snippet\":" + json_string(d.source_snippet)    + "," +
+        "\"suggestion\":"     + json_string(d.suggestion)        + "," +
+        "\"related\":"        + related_json                     + "," +
+        "\"diff\":"           + diff_json                        +
+    "}"
+}
+
+fn location_to_json(loc: Location) -> string {
+    return "{" +
+        "\"file\":"       + json_string(loc.file)          + "," +
+        "\"line\":"       + loc.line.to_string()            + "," +
+        "\"column\":"     + loc.column.to_string()          + "," +
+        "\"end_line\":"   + loc.end_line.to_string()        + "," +
+        "\"end_column\":" + loc.end_column.to_string()      +
+    "}"
+}
+
+/// Converte uma string SEED para literal JSON com escaping básico.
+fn json_string(s: string) -> string {
+    // Escapar caracteres especiais JSON
+    let result = ""
+    for i in 0..s.len {
+        let ch = s.char_at(i)
+        if ch == "\"" {
+            result = result + "\\\""
+        } else if ch == "\\" {
+            result = result + "\\\\"
+        } else if ch == "\n" {
+            result = result + "\\n"
+        } else if ch == "\r" {
+            result = result + "\\r"
+        } else if ch == "\t" {
+            result = result + "\\t"
+        } else {
+            result = result + ch
+        }
+    }
+    return "\"" + result + "\""
+}
+
+// ─────────────────────────────────────────────
+// parse_diagnostic_json — desserialização JSON
+// ─────────────────────────────────────────────
+
+/// Desserializa um Diagnostic a partir de uma string JSON.
+/// Retorna Result[Diagnostic, string] com mensagem de erro em caso de falha.
+///
+/// Requisito: 15.8
+fn parse_diagnostic_json(json_str: string) -> Result[Diagnostic, string] {
+    // Parsear o primeiro objeto se for uma lista de um elemento
+    let trimmed = json_str.trim()
+
+    // Suporta tanto objeto único quanto lista com um elemento
+    let obj_str = if trimmed.starts_with("[") {
+        // Extrai o primeiro objeto da lista
+        let inner = trimmed.slice(1, trimmed.len - 1).trim()
+        if inner.len == 0 {
+            return Result.Err("JSON vazio")
+        }
+        inner
+    } else {
+        trimmed
+    }
+
+    if !obj_str.starts_with("{") {
+        return Result.Err("JSON inválido: esperado objeto")
+    }
+
+    let code          = json_get_string(obj_str, "code")
+    let severity_str  = json_get_string(obj_str, "severity")
+    let message       = json_get_string(obj_str, "message")
+    let snippet       = json_get_string(obj_str, "source_snippet")
+    let suggestion    = json_get_string(obj_str, "suggestion")
+    let diff_raw      = json_get_nullable_string(obj_str, "diff")
+
+    if code == null || severity_str == null || message == null {
+        return Result.Err("JSON inválido: campos obrigatórios ausentes")
+    }
+
+    let severity = Severity { level: severity_str }
+
+    // Parsear location
+    let loc_str = json_get_object(obj_str, "location")
+    let loc = if loc_str == null {
+        Location { file: "", line: 0, column: 0, end_line: 0, end_column: 0 }
+    } else {
+        parse_location_json(loc_str)
+    }
+
+    // Parsear related (lista de Diagnostics — desserialização superficial)
+    let related_arr = json_get_array(obj_str, "related")
+    let related = []
+    for rel_str in related_arr {
+        let rel_result = parse_diagnostic_json(rel_str)
+        match rel_result {
+            Result.Ok(rel) => related.push(rel)
+            Result.Err(_)  => {}
+        }
+    }
+
+    let d = Diagnostic {
+        code:           code,
+        severity:       severity,
+        location:       loc,
+        message:        message,
+        source_snippet: snippet != null ? snippet : "",
+        suggestion:     suggestion != null ? suggestion : "",
+        related:        related,
+        diff:           diff_raw
+    }
+
+    return Result.Ok(d)
+}
+
+fn parse_location_json(loc_str: string) -> Location {
+    return Location {
+        file:       json_get_string(loc_str, "file") != null ? json_get_string(loc_str, "file") : "",
+        line:       json_get_int(loc_str, "line"),
+        column:     json_get_int(loc_str, "column"),
+        end_line:   json_get_int(loc_str, "end_line"),
+        end_column: json_get_int(loc_str, "end_column")
+    }
+}
+
+// ─────────────────────────────────────────────
+// Utilitários JSON mínimos (parser sem dependências)
+// ─────────────────────────────────────────────
+
+/// Extrai o valor de uma chave string de um objeto JSON simples.
+fn json_get_string(obj: string, key: string) -> string {
+    let search = "\"" + key + "\":"
+    let idx = obj.index_of(search)
+    if idx < 0 {
+        return null
+    }
+    let after = obj.slice(idx + search.len, obj.len).trim_start()
+    if !after.starts_with("\"") {
+        if after.starts_with("null") {
+            return null
+        }
+        return null
+    }
+    // Lê até fechar a string, respeitando escapes
+    return json_read_string_value(after)
+}
+
+/// Extrai o valor string ou null de uma chave nullable.
+fn json_get_nullable_string(obj: string, key: string) -> string {
+    let search = "\"" + key + "\":"
+    let idx = obj.index_of(search)
+    if idx < 0 {
+        return null
+    }
+    let after = obj.slice(idx + search.len, obj.len).trim_start()
+    if after.starts_with("null") {
+        return null
+    }
+    if after.starts_with("\"") {
+        return json_read_string_value(after)
+    }
+    return null
+}
+
+/// Lê o valor numérico de uma chave inteira.
+fn json_get_int(obj: string, key: string) -> int {
+    let search = "\"" + key + "\":"
+    let idx = obj.index_of(search)
+    if idx < 0 {
+        return 0
+    }
+    let after = obj.slice(idx + search.len, obj.len).trim_start()
+    // Lê dígitos
+    let num_str = ""
+    for i in 0..after.len {
+        let ch = after.char_at(i)
+        if ch >= "0" && ch <= "9" {
+            num_str = num_str + ch
+        } else {
+            break
+        }
+    }
+    if num_str.len == 0 {
+        return 0
+    }
+    return num_str.to_int()
+}
+
+/// Extrai um sub-objeto JSON associado a uma chave.
+fn json_get_object(obj: string, key: string) -> string {
+    let search = "\"" + key + "\":"
+    let idx = obj.index_of(search)
+    if idx < 0 {
+        return null
+    }
+    let after = obj.slice(idx + search.len, obj.len).trim_start()
+    if !after.starts_with("{") {
+        return null
+    }
+    return json_extract_balanced(after, "{", "}")
+}
+
+/// Extrai uma lista JSON e retorna cada elemento como string.
+fn json_get_array(obj: string, key: string) -> [string] {
+    let search = "\"" + key + "\":"
+    let idx = obj.index_of(search)
+    if idx < 0 {
+        return []
+    }
+    let after = obj.slice(idx + search.len, obj.len).trim_start()
+    if !after.starts_with("[") {
+        return []
+    }
+    let arr_str = json_extract_balanced(after, "[", "]")
+    return json_split_array_elements(arr_str.slice(1, arr_str.len - 1))
+}
+
+/// Lê uma string JSON a partir de `"`, retornando o conteúdo sem aspas e com unescaping.
+fn json_read_string_value(s: string) -> string {
+    // s começa com "
+    let result = ""
+    let i = 1   // pula a aspas de abertura
+    while i < s.len {
+        let ch = s.char_at(i)
+        if ch == "\\" && i + 1 < s.len {
+            let next = s.char_at(i + 1)
+            if next == "\"" {
+                result = result + "\""
+            } else if next == "\\" {
+                result = result + "\\"
+            } else if next == "n" {
+                result = result + "\n"
+            } else if next == "r" {
+                result = result + "\r"
+            } else if next == "t" {
+                result = result + "\t"
+            } else {
+                result = result + next
+            }
+            i = i + 2
+        } else if ch == "\"" {
+            break   // fecha a string
+        } else {
+            result = result + ch
+            i = i + 1
+        }
+    }
+    return result
+}
+
+/// Extrai o conteúdo de um bloco balanceado (objeto ou array) como string.
+fn json_extract_balanced(s: string, open: string, close: string) -> string {
+    let depth = 0
+    let result = ""
+    let in_str = false
+
+    for i in 0..s.len {
+        let ch = s.char_at(i)
+
+        if in_str {
+            result = result + ch
+            if ch == "\"" && (i == 0 || s.char_at(i - 1) != "\\") {
+                in_str = false
+            }
+        } else if ch == "\"" {
+            result = result + ch
+            in_str = true
+        } else if ch == open {
+            depth = depth + 1
+            result = result + ch
+        } else if ch == close {
+            depth = depth - 1
+            result = result + ch
+            if depth == 0 {
+                break
+            }
+        } else {
+            result = result + ch
+        }
+    }
+
+    return result
+}
+
+/// Divide os elementos de uma string de array JSON em partes individuais.
+fn json_split_array_elements(arr_content: string) -> [string] {
+    let elements = []
+    let trimmed = arr_content.trim()
+    if trimmed.len == 0 {
+        return elements
+    }
+
+    let i = 0
+    while i < trimmed.len {
+        let ch = trimmed.char_at(i)
+
+        if ch == "{" {
+            let element = json_extract_balanced(trimmed.slice(i, trimmed.len), "{", "}")
+            elements.push(element)
+            i = i + element.len
+        } else if ch == "[" {
+            let element = json_extract_balanced(trimmed.slice(i, trimmed.len), "[", "]")
+            elements.push(element)
+            i = i + element.len
+        } else if ch == "\"" {
+            // String element
+            let element = json_read_string_raw(trimmed.slice(i, trimmed.len))
+            elements.push(element)
+            i = i + element.len
+        } else if ch == "," || ch == " " {
+            i = i + 1
+        } else {
+            // null, number, bool
+            let end = i
+            while end < trimmed.len {
+                let c = trimmed.char_at(end)
+                if c == "," || c == " " || c == "]" {
+                    break
+                }
+                end = end + 1
+            }
+            if end > i {
+                elements.push(trimmed.slice(i, end))
+            }
+            i = end
+        }
+    }
+
+    return elements
+}
+
+/// Lê uma string JSON bruta (com aspas) a partir de uma posição.
+fn json_read_string_raw(s: string) -> string {
+    let result = "\""
+    let i = 1
+    while i < s.len {
+        let ch = s.char_at(i)
+        result = result + ch
+        if ch == "\\" && i + 1 < s.len {
+            result = result + s.char_at(i + 1)
+            i = i + 2
+        } else if ch == "\"" {
+            break
+        } else {
+            i = i + 1
+        }
+    }
+    return result
+}
+
+// ─────────────────────────────────────────────
+// group_by_location — agrupa Diagnostics por intervalo
+// ─────────────────────────────────────────────
+
+/// Agrupa uma lista de Diagnostics cujos intervalos de código se sobrepõem ou
+/// correspondem exatamente. Cada grupo é uma sub-lista de Diagnostics.
+///
+/// Requisito: 15.4
+fn group_by_location(diagnostics: [Diagnostic]) -> [[Diagnostic]] {
+    let groups = []
+    let used = []
+
+    for i in 0..diagnostics.len {
+        used.push(false)
+    }
+
+    for i in 0..diagnostics.len {
+        if used[i] {
+            continue
+        }
+
+        let group = [diagnostics[i]]
+        used[i] = true
+
+        for j in (i + 1)..diagnostics.len {
+            if used[j] {
+                continue
+            }
+            if locations_overlap(diagnostics[i].location, diagnostics[j].location) {
+                group.push(diagnostics[j])
+                used[j] = true
+            }
+        }
+
+        groups.push(group)
+    }
+
+    return groups
+}
+
+/// Verifica se dois intervalos de localização se sobrepõem ou são idênticos.
+fn locations_overlap(a: Location, b: Location) -> bool {
+    if a.file != b.file {
+        return false
+    }
+    // Sobreposição de intervalo de linhas
+    if a.end_line < b.line || b.end_line < a.line {
+        return false
+    }
+    return true
+}
+
+// ─────────────────────────────────────────────
+// compute_diff — gera diff unificado
+// ─────────────────────────────────────────────
+
+/// Calcula um diff unificado entre o código original e o código sugerido.
+/// Formato compatível com `diff -u` (unified diff).
+///
+/// Requisito: 15.6
+fn compute_diff(original: string, suggestion: string) -> string {
+    if original == suggestion {
+        return ""
+    }
+
+    let orig_lines = original.split("\n")
+    let sugg_lines = suggestion.split("\n")
+
+    let result = "--- original\n+++ suggestion\n"
+
+    // Gera hunks linha a linha (algoritmo simples para diffs curtos)
+    let hunks = compute_hunks(orig_lines, sugg_lines)
+    result = result + hunks
+
+    return result
+}
+
+/// Gera os hunks do diff unificado comparando as linhas.
+fn compute_hunks(orig: [string], sugg: [string]) -> string {
+    // LCS simples para identificar linhas comuns/alteradas
+    let lcs = compute_lcs(orig, sugg)
+    
+    let result = ""
+    let oi = 0  // índice em orig
+    let si = 0  // índice em sugg
+    let li = 0  // índice em lcs
+
+    // Cabeçalho do hunk: mostrar todo o diff como um único hunk
+    let orig_count = orig.len
+    let sugg_count = sugg.len
+    result = result + "@@ -1," + orig_count.to_string() + " +1," + sugg_count.to_string() + " @@\n"
+
+    // Marca linhas como removidas (-) ou adicionadas (+) ou comuns ( )
+    let hunk_lines = []
+
+    while oi < orig.len || si < sugg.len {
+        if oi < orig.len && si < sugg.len && orig[oi] == sugg[si] {
+            // Linha comum
+            hunk_lines.push(" " + orig[oi])
+            oi = oi + 1
+            si = si + 1
+        } else if si < sugg.len && (oi >= orig.len || orig[oi] != sugg[si]) {
+            // Linha adicionada
+            hunk_lines.push("+" + sugg[si])
+            si = si + 1
+        } else {
+            // Linha removida
+            hunk_lines.push("-" + orig[oi])
+            oi = oi + 1
+        }
+    }
+
+    result = result + hunk_lines.join("\n")
+    return result
+}
+
+/// Stub de LCS — para diffs simples de suggestion, não é necessário o algoritmo completo.
+fn compute_lcs(a: [string], b: [string]) -> [string] {
+    // Implementação mínima: retorna strings comuns em ordem
+    let common = []
+    for item in a {
+        if b.contains(item) {
+            common.push(item)
+        }
+    }
+    return common
+}
+
+// ─────────────────────────────────────────────
+// emit_diagnostics — imprime no stderr / stdout
+// ─────────────────────────────────────────────
+
+/// Emite os diagnósticos para o stderr (formato texto) ou stdout (formato JSON).
+/// Controla o formato via flag `--error-format json`.
+///
+/// Requisito: 15.5
+fn emit_diagnostics(diagnostics: [Diagnostic], error_format: string) {
+    if error_format == "json" {
+        // Emite JSON na stdout (requisito 15.5)
+        let json_output = format_diagnostics_json(diagnostics)
+        io.stdout.write(json_output + "\n")
+    } else {
+        // Emite texto formatado no stderr, agrupando por localização
+        let groups = group_by_location(diagnostics)
+        for group in groups {
+            // Emite o primeiro Diagnostic do grupo com sublinhamento
+            let first = group[0]
+            let formatted = format_diagnostic(first)
+            io.stderr.write(formatted + "\n")
+
+            // Emite os demais do grupo como notas adicionais (sem repetir snippet)
+            for i in 1..group.len {
+                let d = group[i]
+                let loc_str = d.location.file + ":" + d.location.line.to_string() + ":" + d.location.column.to_string()
+                io.stderr.write("  [" + d.severity.level.to_upper() + "] " + d.code + " " + loc_str + ": " + d.message + "\n")
+                if d.suggestion.len > 0 {
+                    io.stderr.write("    suggestion: " + d.suggestion + "\n")
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────
+// has_errors — indica se há erros fatais
+// ─────────────────────────────────────────────
+
+/// Retorna true se houver pelo menos um Diagnostic de nível `error`
+/// (que impede a compilação).
+///
+/// Requisito: 15.2
+fn has_errors(diagnostics: [Diagnostic]) -> bool {
+    for d in diagnostics {
+        if d.severity.level == "error" {
+            return true
+        }
+    }
+    return false
+}
+
+// ─────────────────────────────────────────────
+// Igualdade de Diagnostics (útil para testes)
+// ─────────────────────────────────────────────
+
+/// Compara dois Diagnostics campo a campo.
+fn diagnostics_equal(a: Diagnostic, b: Diagnostic) -> bool {
+    if a.code != b.code { return false }
+    if a.severity.level != b.severity.level { return false }
+    if !locations_equal(a.location, b.location) { return false }
+    if a.message != b.message { return false }
+    if a.source_snippet != b.source_snippet { return false }
+    if a.suggestion != b.suggestion { return false }
+    if a.diff != b.diff { return false }
+    if a.related.len != b.related.len { return false }
+    for i in 0..a.related.len {
+        if !diagnostics_equal(a.related[i], b.related[i]) { return false }
+    }
+    return true
+}
+
+fn locations_equal(a: Location, b: Location) -> bool {
+    return a.file == b.file &&
+           a.line == b.line &&
+           a.column == b.column &&
+           a.end_line == b.end_line &&
+           a.end_column == b.end_column
+}

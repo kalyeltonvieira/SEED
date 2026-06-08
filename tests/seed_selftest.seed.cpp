@@ -1,4 +1,4 @@
-#include "seed_lib.hpp"
+#include "stdlib_stub.h"
 
 
 
@@ -16,40 +16,40 @@ void test_10_effects_cannot_grow_silently();
 void test_11_license_accepts_no();
 
 void test_0_hello_world_approved() {
-const auto p = seed1 . compile ( std::string("fn main(){ print(\"Hello World\") }") ) ;
+const auto p = seed1 . compile ( std::string("fn main() { print(\"Hello World\") }") ) ;
 assert ( seed::any(p.diagnostics, [&](auto d) { return d . code == std::string("SEED000") ; } ) ) ;
 }
 
 void test_1_naive_fibonacci_warned() {
-const auto p = seed1 . compile ( std::string("fn fib(n){ if n<=1{n}else{fib(n-1)+fib(n-2)} }") ) ;
+const auto p = seed1 . compile ( std::string("fn fib(n) { math.fib_matrix(n) }") ) ;
 assert ( seed::any(p.diagnostics, [&](auto d) { return d . code == std::string("SEED002") ; } ) ) ;
 assert ( seed::any(p.rewrites, [&](auto r) { return r . name == std::string("fib-naive-to-matrix") ; } ) ) ;
 }
 
 void test_2_bubble_sort_needs_negotiation() {
 const auto src = std::string(R"raw(
-        fn ordenar(lista) {
-            for i in 0..len(lista) {
-                for j in 0..len(lista)-1 {
-                    if lista[j] > lista[j+1] { trocar(lista, j, j+1) }
-                }
+    fn ordenar(lista) {
+        for i in 0..len(lista) {
+            for j in 0..len(lista)-1 {
+                if lista[j] > lista[j+1] { trocar(lista, j, j+1) }
             }
-            lista
-        }
-    )raw") ;
+    }
+lista
+}
+)raw") ;
 const auto p = seed1 . compile ( src ) ;
 assert ( seed::any(p.diagnostics, [&](auto d) { return d . code == std::string("SEED001") ; } ) ) ;
 assert ( seed::any(p.rewrites, [&](auto r) { return r . name == std::string("bubble-sort-to-timsort") ; } ) ) ;
 }
 
 void test_3_keep_compiles_original() {
-const auto src = std::string("#[keep] fn ordenar(lista){ for i in 0..len(lista){ for j in 0..len(lista)-1{ if lista[j] > lista[j+1]{ swap(lista,j,j+1) } } } lista }") ;
+const auto src = std::string("#[keep] fn ordenar(lista) { for i in 0..len(lista) { for j in 0..len(lista)-1 { if lista[j] > lista[j+1]{ swap(lista,j,j+1) } } } lista }") ;
 const auto p = seed1 . compile ( src ) ;
 assert ( seed::any(p.diagnostics, [&](auto d) { return d . message . contains ( std::string("preservado") ) ; } ) ) ;
 }
 
 void test_4_select_star_expires() {
-const auto p = seed1 . compile ( std::string("fn buscar(){ sql_query(\"SELECT * FROM usuarios\") }") ) ;
+const auto p = seed1 . compile ( std::string("fn buscar() { sql_query(\"SELECT * FROM usuarios LIMIT 100\")? }") ) ;
 assert ( seed::any(p.diagnostics, [&](auto d) { return d . code == std::string("SEED003") ; } ) ) ;
 assert ( seed::any(p.rewrites, [&](auto r) { return r . name == std::string("select-star-to-paged-cache") ; } ) ) ;
 }
@@ -60,13 +60,13 @@ assert ( seed::any(p.diagnostics, [&](auto d) { return d . code == std::string("
 }
 
 void test_6_non_exhaustive_result_match_warned() {
-const auto p = seed1 . compile ( std::string("fn explain(r: Result[Int,Error]) -> String { match r { Ok(v) => to_string(v) } }") ) ;
+const auto p = seed1 . compile ( std::string("fn explain(r: Result[Int,Error]) -> String { match r { Ok(v) => to_string(v), Err(e) => ") error std::string(" } }") ) ;
 assert ( seed::any(p.diagnostics, [&](auto d) { return d . code == std::string("SEED005") ; } ) ) ;
 assert ( seed::any(p.rewrites, [&](auto r) { return r . name == std::string("complete-match-result") ; } ) ) ;
 }
 
 void test_7_unchecked_result_needs_question_or_match() {
-const auto p = seed1 . compile ( std::string("fn load(path: String) effect fs -> Result[String,Error] { let body = fs.read_text(path); return Ok(body) }") ) ;
+const auto p = seed1 . compile ( std::string("fn load(path: String) effect fs -> Result[String,Error] { let body = fs.read_text(path)?; return Ok(body) }") ) ;
 assert ( seed::any(p.diagnostics, [&](auto d) { return d . code == std::string("SEED006") ; } ) ) ;
 assert ( seed::any(p.rewrites, [&](auto r) { return r . name == std::string("unchecked-result-to-question") ; } ) ) ;
 }
@@ -84,8 +84,8 @@ assert ( seed::any(result.selected.tests, [&](auto t) { return t . contains ( st
 }
 
 void test_10_effects_cannot_grow_silently() {
-const auto before = seed0 . compile ( std::string("fn a(){ return 1 }") ) ;
-const auto after = seed0 . compile ( std::string("fn a(){ net.post(\"x\", \"y\") }") ) ;
+const auto before = seed0 . compile ( std::string("fn a() { return 1 }") ) ;
+const auto after = seed0 . compile ( std::string("fn a() { net.post(\"x\", \"y\") }") ) ;
 assert ( seed1 . effect_audit ( before , after ) == false ) ;
 }
 

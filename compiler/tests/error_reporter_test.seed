@@ -1,0 +1,468 @@
+module compiler.tests.error_reporter_test
+
+import compiler.error_reporter
+
+/// Testes do ErrorReporter
+/// Cobre: Property P16 (round-trip JSON), Property P18 (campos obrigatórios)
+/// e testes unitários dos requisitos 15.1, 15.3, 15.4, 15.6, 15.7
+
+// ─────────────────────────────────────────────
+// Geradores para PBT
+// ─────────────────────────────────────────────
+
+/// Gera um Location arbitrário com valores válidos.
+fn gen_location() -> Location {
+    return gen_from(fn() -> Location {
+        let file = gen_string_prefix("src/file_", gen_int(1, 20)) + ".seed"
+        let line = gen_int(1, 1000)
+        let col  = gen_int(0, 80)
+        let end_line = line + gen_int(0, 3)
+        let end_col  = if end_line == line { col + gen_int(1, 20) } else { gen_int(0, 40) }
+        return Location {
+            file: file,
+            line: line,
+            column: col,
+            end_line: end_line,
+            end_column: end_col
+        }
+    })
+}
+
+/// Gera um Severity arbitrário.
+fn gen_severity() -> Severity {
+    let levels = ["error", "warning", "proposal"]
+    return Severity { level: levels[gen_int(0, 2)] }
+}
+
+/// Gera um Diagnostic arbitrário sem Diagnostics relacionados (para simplificar).
+fn gen_diagnostic() -> Diagnostic {
+    return gen_from(fn() -> Diagnostic {
+        let codes = ["SEED005", "SEED007", "SEED008", "SEED010", "SEED011",
+                     "SEED012", "SEED013", "SEED014", "SEED015", "SEED_PKG001"]
+        let code = codes[gen_int(0, codes.len - 1)]
+        let sev  = gen_severity()
+        let loc  = gen_location()
+        let snippet = "    let x = " + gen_string_alpha(gen_int(3, 10))
+        let suggestion = "Use o tipo correto: " + gen_string_alpha(gen_int(4, 12))
+        let message = "Erro em " + gen_string_alpha(gen_int(5, 20))
+
+        return Diagnostic {
+            code: code,
+            severity: sev,
+            location: loc,
+            message: message,
+            source_snippet: snippet,
+            suggestion: suggestion,
+            related: [],
+            diff: null
+        }
+    })
+}
+
+/// Gera um Diagnostic com diff preenchido.
+fn gen_diagnostic_with_diff() -> Diagnostic {
+    return gen_from(fn() -> Diagnostic {
+        let d = gen_diagnostic()
+        let original   = "let x = " + gen_string_alpha(gen_int(3, 8))
+        let suggestion = "let x = " + gen_string_alpha(gen_int(3, 8))
+        let diff = compute_diff(original, suggestion)
+        return Diagnostic {
+            code: d.code,
+            severity: d.severity,
+            location: d.location,
+            message: d.message,
+            source_snippet: original,
+            suggestion: suggestion,
+            related: [],
+            diff: diff
+        }
+    })
+}
+
+// ─────────────────────────────────────────────
+// Helpers de geração
+// ─────────────────────────────────────────────
+
+fn gen_string_alpha(n: int) -> string {
+    let chars = "abcdefghijklmnopqrstuvwxyz"
+    let result = ""
+    for i in 0..n {
+        result = result + chars.char_at(gen_int(0, chars.len - 1))
+    }
+    return result
+}
+
+fn gen_string_prefix(prefix: string, n: int) -> string {
+    return prefix + n.to_string()
+}
+
+// ─────────────────────────────────────────────
+// Property P16 — Round-trip de Diagnostic (JSON)
+// Feature: seed-language-advanced-features, Property 16: Diagnostic JSON round-trip
+// ─────────────────────────────────────────────
+
+// Validates: Requirements 15.8
+property("Diagnostic JSON round-trip", gen_diagnostic(), fn(d: Diagnostic) -> bool {
+    let json_str = format_diagnostics_json([d])
+    let parsed_result = parse_diagnostic_json(json_str)
+
+    match parsed_result {
+        Result.Err(_) => return false
+        Result.Ok(parsed) => return diagnostics_equal(d, parsed)
+    }
+}, iterations: 200)
+
+// ─────────────────────────────────────────────
+// Property P18 — Diagnostic completo (campos obrigatórios)
+// Feature: seed-language-advanced-features, Property 18: Diagnostic completeness
+// ─────────────────────────────────────────────
+
+// Validates: Requirements 15.1
+property("Diagnostic completeness", gen_diagnostic(), fn(d: Diagnostic) -> bool {
+    let formatted = format_diagnostic(d)
+
+    let has_code     = formatted.contains(d.code)
+    let has_severity = formatted.contains(d.severity.level.to_upper())
+    let has_file     = formatted.contains(d.location.file)
+    let has_line     = formatted.contains(d.location.line.to_string())
+    let has_col      = formatted.contains(d.location.column.to_string())
+    let has_message  = formatted.contains(d.message)
+    let has_sugg     = d.suggestion.len == 0 || formatted.contains(d.suggestion)
+
+    // O sublinhamento `^` deve aparecer apenas para erros (requisito 15.3)
+    let has_underline = if d.severity.level == "error" {
+        formatted.contains("^")
+    } else {
+        true    // para warning/proposal o `^` não é obrigatório
+    }
+
+    return has_code && has_severity && has_file && has_line && has_col &&
+           has_message && has_sugg && has_underline
+}, iterations: 200)
+
+// ─────────────────────────────────────────────
+// Testes Unitários
+// ─────────────────────────────────────────────
+
+fn make_test_location() -> Location {
+    return Location {
+        file: "src/main.seed",
+        line: 42,
+        column: 5,
+        end_line: 42,
+        end_column: 20
+    }
+}
+
+fn make_error_diagnostic() -> Diagnostic {
+    return Diagnostic {
+        code: "SEED005",
+        severity: SEVERITY_ERROR,
+        location: make_test_location(),
+        message: "Match não-exaustivo: variante 'None' não tratada",
+        source_snippet: "    match valor {",
+        suggestion: "Adicione o braço 'None => ...'",
+        related: [],
+        diff: null
+    }
+}
+
+fn make_warning_diagnostic() -> Diagnostic {
+    return Diagnostic {
+        code: "SEED_W001",
+        severity: SEVERITY_WARNING,
+        location: make_test_location(),
+        message: "Variável 'x' definida mas não usada",
+        source_snippet: "    let x = 42",
+        suggestion: "Remova a variável ou prefixe com '_'",
+        related: [],
+        diff: null
+    }
+}
+
+/// Teste 1 — Diagnostic de nível `error` deve conter sublinhamento com `^`
+///
+/// Validates: Requirements 15.3
+fn test_error_has_underline() -> bool {
+    let d = make_error_diagnostic()
+    let formatted = format_diagnostic(d)
+    return formatted.contains("^")
+}
+
+/// Teste 2 — Diagnostic de nível `warning` NÃO deve exibir sublinhamento com `^`
+///
+/// Validates: Requirements 15.3
+fn test_warning_no_underline() -> bool {
+    let d = make_warning_diagnostic()
+    let formatted = format_diagnostic(d)
+
+    // O `^` não deve aparecer como sublinhado na linha de underline
+    // (pode aparecer em outros contextos — verificamos que não há linha dedicada de underline)
+    let lines = formatted.split("\n")
+    for line in lines {
+        let trimmed = line.trim()
+        if trimmed.len > 0 && trimmed.starts_with("^") {
+            return false    // linha de underline não esperada para warning
+        }
+    }
+    return true
+}
+
+/// Teste 3 — Múltiplos Diagnostics no mesmo intervalo devem ser agrupados
+///
+/// Validates: Requirements 15.4
+fn test_group_by_same_location() -> bool {
+    let loc = make_test_location()
+
+    let d1 = Diagnostic {
+        code: "SEED005",
+        severity: SEVERITY_ERROR,
+        location: loc,
+        message: "Variante 'None' não tratada",
+        source_snippet: "    match valor {",
+        suggestion: "Adicione o braço 'None => ...'",
+        related: [],
+        diff: null
+    }
+    let d2 = Diagnostic {
+        code: "SEED007",
+        severity: SEVERITY_WARNING,
+        location: loc,
+        message: "Tipo incompatível com Union",
+        source_snippet: "    match valor {",
+        suggestion: "Converta o tipo",
+        related: [],
+        diff: null
+    }
+
+    let groups = group_by_location([d1, d2])
+
+    // Deve haver apenas um grupo, com dois elementos
+    return groups.len == 1 && groups[0].len == 2
+}
+
+/// Teste 4 — Diagnostics em localizações diferentes geram grupos separados
+///
+/// Validates: Requirements 15.4
+fn test_group_different_locations() -> bool {
+    let loc1 = Location { file: "src/a.seed", line: 10, column: 0, end_line: 10, end_column: 5 }
+    let loc2 = Location { file: "src/a.seed", line: 50, column: 0, end_line: 50, end_column: 5 }
+
+    let d1 = Diagnostic {
+        code: "SEED005",
+        severity: SEVERITY_ERROR,
+        location: loc1,
+        message: "Erro A",
+        source_snippet: "let a = 1",
+        suggestion: "Corrija A",
+        related: [],
+        diff: null
+    }
+    let d2 = Diagnostic {
+        code: "SEED007",
+        severity: SEVERITY_ERROR,
+        location: loc2,
+        message: "Erro B",
+        source_snippet: "let b = 2",
+        suggestion: "Corrija B",
+        related: [],
+        diff: null
+    }
+
+    let groups = group_by_location([d1, d2])
+    return groups.len == 2
+}
+
+/// Teste 5 — Diagnostic com suggestion pontual deve gerar diff unificado
+///
+/// Validates: Requirements 15.6
+fn test_compute_diff_generates_unified_diff() -> bool {
+    let original   = "let x = soma(a, b)"
+    let suggestion = "let x = soma(a, b, 0)"
+
+    let diff = compute_diff(original, suggestion)
+
+    // O diff deve conter marcadores unificados
+    return diff.contains("---") && diff.contains("+++") && diff.contains("@@")
+}
+
+/// Teste 6 — Diagnostic com campo `related` deve exibir Diagnostics secundários
+///
+/// Validates: Requirements 15.7
+fn test_related_diagnostics_in_output() -> bool {
+    let loc_primary   = Location { file: "src/main.seed", line: 10, column: 0, end_line: 10, end_column: 15 }
+    let loc_secondary = Location { file: "src/lib.seed",  line: 5,  column: 0, end_line: 5,  end_column: 10 }
+
+    let related_d = Diagnostic {
+        code: "SEED014",
+        severity: SEVERITY_ERROR,
+        location: loc_secondary,
+        message: "Declaração original aqui",
+        source_snippet: "impl Display for Foo {",
+        suggestion: "Remova a declaração duplicada",
+        related: [],
+        diff: null
+    }
+
+    let d = Diagnostic {
+        code: "SEED014",
+        severity: SEVERITY_ERROR,
+        location: loc_primary,
+        message: "Dois impl Display para o mesmo tipo",
+        source_snippet: "impl Display for Foo {",
+        suggestion: "Remova um dos impl",
+        related: [related_d],
+        diff: null
+    }
+
+    let formatted = format_diagnostic(d)
+
+    // A saída deve mencionar o código e a localização do Diagnostic relacionado
+    return formatted.contains("related") && formatted.contains("SEED014") &&
+           formatted.contains("src/lib.seed")
+}
+
+/// Teste 7 — has_errors retorna true quando há pelo menos um erro
+///
+/// Validates: Requirements 15.2
+fn test_has_errors_with_error() -> bool {
+    let diagnostics = [make_error_diagnostic(), make_warning_diagnostic()]
+    return has_errors(diagnostics) == true
+}
+
+/// Teste 8 — has_errors retorna false quando há apenas warnings/proposals
+///
+/// Validates: Requirements 15.2
+fn test_has_errors_only_warnings() -> bool {
+    let diagnostics = [make_warning_diagnostic()]
+    return has_errors(diagnostics) == false
+}
+
+/// Teste 9 — format_diagnostics_json produz JSON válido para uma lista
+///
+/// Validates: Requirements 15.5
+fn test_format_diagnostics_json_is_valid() -> bool {
+    let d = make_error_diagnostic()
+    let json_str = format_diagnostics_json([d])
+    return json_str.starts_with("[") && json_str.ends_with("]")
+}
+
+/// Teste 10 — parse_diagnostic_json desserializa corretamente
+///
+/// Validates: Requirements 15.8
+fn test_parse_diagnostic_json_roundtrip() -> bool {
+    let d = Diagnostic {
+        code: "SEED005",
+        severity: SEVERITY_ERROR,
+        location: make_test_location(),
+        message: "Match não-exaustivo",
+        source_snippet: "    match valor {",
+        suggestion: "Adicione 'None => ...'",
+        related: [],
+        diff: null
+    }
+
+    let json_str = format_diagnostics_json([d])
+    let result   = parse_diagnostic_json(json_str)
+
+    match result {
+        Result.Err(msg) => {
+            println("parse_diagnostic_json falhou: " + msg)
+            return false
+        }
+        Result.Ok(parsed) => {
+            return diagnostics_equal(d, parsed)
+        }
+    }
+}
+
+/// Teste 11 — underline_source gera sublinhamento correto
+///
+/// Validates: Requirements 15.3
+fn test_underline_source_correct_length() -> bool {
+    let snippet = "    let x = 42"
+    let loc = Location {
+        file: "src/main.seed",
+        line: 1,
+        column: 8,
+        end_line: 1,
+        end_column: 13  // "x = 4" → 5 carets
+    }
+
+    let underline = underline_source(snippet, loc)
+
+    // Deve ter 8 espaços de padding + 5 carets
+    let expected_padding  = "        "   // 8 espaços
+    let expected_underline = "^^^^^"
+
+    return underline == expected_padding + expected_underline
+}
+
+/// Teste 12 — Diagnostic com diff preenchido exibe o diff na saída formatada
+///
+/// Validates: Requirements 15.6
+fn test_format_diagnostic_with_diff() -> bool {
+    let original   = "let x = foo()"
+    let suggestion = "let x = bar()"
+    let diff = compute_diff(original, suggestion)
+
+    let d = Diagnostic {
+        code: "SEED011",
+        severity: SEVERITY_ERROR,
+        location: make_test_location(),
+        message: "Tipo incompatível",
+        source_snippet: original,
+        suggestion: suggestion,
+        related: [],
+        diff: diff
+    }
+
+    let formatted = format_diagnostic(d)
+    return formatted.contains("diff:") && formatted.contains("-") && formatted.contains("+")
+}
+
+// ─────────────────────────────────────────────
+// Runner de testes
+// ─────────────────────────────────────────────
+
+fn run_all_tests() {
+    let tests = [
+        ("error_has_underline",            test_error_has_underline()),
+        ("warning_no_underline",           test_warning_no_underline()),
+        ("group_by_same_location",         test_group_by_same_location()),
+        ("group_different_locations",      test_group_different_locations()),
+        ("compute_diff_unified_diff",      test_compute_diff_generates_unified_diff()),
+        ("related_in_output",              test_related_diagnostics_in_output()),
+        ("has_errors_with_error",          test_has_errors_with_error()),
+        ("has_errors_only_warnings",       test_has_errors_only_warnings()),
+        ("format_json_valid",              test_format_diagnostics_json_is_valid()),
+        ("parse_json_roundtrip",           test_parse_diagnostic_json_roundtrip()),
+        ("underline_correct_length",       test_underline_source_correct_length()),
+        ("format_diagnostic_with_diff",    test_format_diagnostic_with_diff()),
+    ]
+
+    let passed = 0
+    let failed = 0
+
+    for (name, result) in tests {
+        if result {
+            println("  ✓ " + name)
+            passed = passed + 1
+        } else {
+            println("  ✗ " + name)
+            failed = failed + 1
+        }
+    }
+
+    println("\nResultado: " + passed.to_string() + "/" + (passed + failed).to_string() + " testes passaram")
+
+    if failed > 0 {
+        os.exit(1)
+    }
+}
+
+fn main() {
+    println("=== Testes do ErrorReporter ===\n")
+    println("--- Testes Unitários ---")
+    run_all_tests()
+}

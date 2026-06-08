@@ -302,6 +302,21 @@ struct TypeDef {
     vector<string> methods_decls;
     vector<string> methods_impls;
     bool is_alias = false;
+    string generic_params;
+    vector<string> base_classes;
+};
+
+struct IROperand {
+    string value;
+    string type;
+};
+
+struct IRInstruction {
+    string opcode;
+    vector<IROperand> operands;
+    string result;
+    vector<IRInstruction> body1;
+    vector<IRInstruction> body2;
 };
 
 struct FuncDef {
@@ -627,6 +642,30 @@ class Transpiler {
         return expr;
     }
 
+    void report_semantic_warning(const string& msg, int line, int col) {
+        cerr << "\033[1;33mSemantic Warning\033[0m: " << msg << "\n";
+        cerr << "  --> " << file_path << ":" << line << ":" << col << "\n";
+        
+        stringstream ss(source);
+        string line_content;
+        int cur_line = 1;
+        while (getline(ss, line_content)) {
+            if (cur_line == line) {
+                cerr << "   |\n";
+                cerr << cur_line << " | " << line_content << "\n";
+                cerr << "   | ";
+                for (int i = 1; i < col; ++i) {
+                    if (i - 1 < line_content.length() && line_content[i - 1] == '\t') cerr << "\t";
+                    else cerr << " ";
+                }
+                cerr << "\033[1;33m^\033[0m\n";
+                cerr << "   |\n";
+                break;
+            }
+            cur_line++;
+        }
+    }
+
     void check_identifier(Token t, int index) {
         if (t.type != SeedToken::Identifier) return;
         string text = t.text;
@@ -663,7 +702,7 @@ class Transpiler {
         if (!resolve_variable(text).empty()) {
             return;
         }
-        cerr << "Semantic Warning: Use of undeclared identifier '" << text << "' (line " << t.line << ")\n";
+        report_semantic_warning("Use of undeclared identifier '" + text + "'", t.line, t.col);
     }
 
     Token advance() {
@@ -843,6 +882,17 @@ class Transpiler {
     string map_type(string seed_type) {
         seed_type = trim_copy(seed_type);
 
+        vector<string> union_parts = split_top_level(seed_type, '|');
+        if (union_parts.size() > 1) {
+            string cpp_union = "std::variant<";
+            for (size_t i = 0; i < union_parts.size(); ++i) {
+                cpp_union += map_type(union_parts[i]);
+                if (i + 1 < union_parts.size()) cpp_union += ", ";
+            }
+            cpp_union += ">";
+            return cpp_union;
+        }
+
         if (seed_type == "int" || seed_type == "Int" || seed_type == "i32") return "int";
         if (seed_type == "i8") return "signed char";
         if (seed_type == "i16") return "short";
@@ -936,7 +986,6 @@ class Transpiler {
                 }
                 t += advance().text; // ]
             }
-            // Also handle C++ style angle brackets for compatibility
             else if (peek().type == SeedToken::Less) {
                 t += advance().text; // <
                 t += parse_type_str();
@@ -946,6 +995,10 @@ class Transpiler {
                 }
                 t += advance().text; // >
             }
+        }
+        while (peek().type == SeedToken::BitOr || peek().text == "|") {
+            t += advance().text;
+            t += parse_type_str();
         }
         return t;
     }
@@ -981,6 +1034,38 @@ class Transpiler {
                 string body = parse_expr(SeedToken::RParen, SeedToken::Comma);
                 pop_scope();
                 string text = "[&](auto " + param + ") { return " + body + "; }";
+                expr += text + " ";
+                continue;
+            }
+
+            // Closure: |a, b| body
+            if (t.type == SeedToken::BitOr || t.text == "|") {
+                advance(); // consume first |
+                string lambda_params = "";
+                push_scope();
+                while (peek().type != SeedToken::BitOr && peek().text != "|" && peek().type != SeedToken::Eof) {
+                    string pname = advance().text;
+                    string ptype = "auto";
+                    if (peek().type == SeedToken::Colon) {
+                        advance(); // :
+                        ptype = map_type(parse_type_str());
+                    }
+                    declare_variable(pname, ptype, t.line);
+                    if (!lambda_params.empty()) lambda_params += ", ";
+                    lambda_params += ptype + " " + pname;
+                    if (peek().type == SeedToken::Comma) advance();
+                }
+                if (peek().type == SeedToken::BitOr || peek().text == "|") advance(); // consume second |
+                
+                string body;
+                if (peek().type == SeedToken::LBrace) {
+                    body = parse_block();
+                } else {
+                    body = "{ return " + parse_expr(SeedToken::Comma, SeedToken::RParen) + "; }";
+                }
+                pop_scope();
+                
+                string text = "[&](" + lambda_params + ") " + body;
                 expr += text + " ";
                 continue;
             }
@@ -1052,6 +1137,22 @@ class Transpiler {
             }
             if (text == "print") text = "seed::print";
             else if (text == "println") text = "seed::println";
+            else if (text == "alloc" && peek().type == SeedToken::LParen) {
+                advance(); // consume alloc
+                advance(); // consume (
+                string size_expr = parse_expr(SeedToken::RParen);
+                if (peek().type == SeedToken::RParen) advance(); // consume )
+                expr += "seed::track_alloc(" + size_expr + ", __FILE__, __LINE__) ";
+                continue;
+            }
+            else if (text == "free" && peek().type == SeedToken::LParen) {
+                advance(); // consume free
+                advance(); // consume (
+                string ptr_expr = parse_expr(SeedToken::RParen);
+                if (peek().type == SeedToken::RParen) advance(); // consume )
+                expr += "seed::track_free(" + ptr_expr + ") ";
+                continue;
+            }
             else if (text == "string" || text == "String") text = "std::string";
             else if (text == "to_string") {
                 if (rewrite_trailing_dot(expr, false)) {
@@ -1361,65 +1462,24 @@ class Transpiler {
         return expr;
     }
 
-    string parse_block() {
-        string blk = "{\n";
+    vector<IRInstruction> parse_ir_block() {
+        vector<IRInstruction> insts;
         advance(); // LBrace
         push_scope();
         while (peek().type != SeedToken::Eof && peek().type != SeedToken::RBrace) {
-            blk += parse_statement() + "\n";
+            insts.push_back(parse_statement_ir());
         }
         pop_scope();
-        advance(); // RBrace
-        blk += "}";
-        return blk;
+        if (peek().type == SeedToken::RBrace) advance(); // RBrace
+        return insts;
     }
 
-    string parse_match_statement() {
-        // Parse selector expression
-        advance(); // consume 'match'
-        string selector = parse_expr(SeedToken::LBrace);
-        // Expect opening brace for arms
-        if (peek().type == SeedToken::LBrace) advance();
-        vector<pair<string,string>> arms; // variant, expr
-        // Parse each arm until closing brace
-        while (peek().type != SeedToken::RBrace && peek().type != SeedToken::Eof) {
-            // variant string literal
-            string variant = advance().text;
-            // optional binding (ignored for simple match)
-            if (peek().type == SeedToken::LParen) {
-                // skip binding syntax
-                advance(); // '('
-                while (peek().type != SeedToken::RParen && peek().type != SeedToken::Eof) advance();
-                if (peek().type == SeedToken::RParen) advance();
-            }
-            consume_fat_arrow();
-            // expression for this arm
-            string arm_expr = parse_expr(SeedToken::Comma, SeedToken::RBrace);
-            arms.emplace_back(variant, arm_expr);
-            if (peek().type == SeedToken::Comma || peek().type == SeedToken::Semicolon) advance();
-        }
-        // Consume closing brace
-        if (peek().type == SeedToken::RBrace) advance();
-        // Build lambda expression
-        string cpp = "([&](){\n";
-        for (size_t i = 0; i < arms.size(); ++i) {
-            const auto& [var, expr] = arms[i];
-            if (i == 0) cpp += "if (" + selector + " == " + var + ") ";
-            else cpp += "else if (" + selector + " == " + var + ") ";
-            cpp += "return " + expr + ";\n";
-        }
-        // default case – return last expression if provided, else zero
-        if (!arms.empty()) {
-            const auto& [lastVar, lastExpr] = arms.back();
-            cpp += "else return " + lastExpr + ";\n";
-        } else {
-            cpp += "return 0;\n";
-        }
-        cpp += "})()";
-        return cpp;
+    string parse_block() {
+        vector<IRInstruction> insts = parse_ir_block();
+        return compile_ir_block(insts);
     }
 
-    string parse_statement() {
+    IRInstruction parse_statement_ir() {
         Token t = peek();
         
         if (t.text == "let") {
@@ -1445,26 +1505,18 @@ class Transpiler {
             if (type_str != "auto") {
                 string inf_expr_t = infer_expr_type(folded);
                 if (!are_types_compatible(type_str, inf_expr_t)) {
-                    cerr << "Semantic Warning: Type mismatch in declaration of '" << name 
-                         << "'. Expected '" << type_str << "' but got '" << inf_expr_t << "' (line " << t.line << ")\n";
+                    report_semantic_warning("Type mismatch in declaration of '" + name 
+                         + "'. Expected '" + type_str + "' but got '" + inf_expr_t + "'", t.line, t.col);
                 }
             }
 
             declare_variable(name, inferred_type, t.line, !is_mut, folded);
 
-            if (has_question_mark_operator(folded)) {
-                string clean_expr = without_question_mark(folded);
-                string tmp = "__seed_try_" + name + "_" + to_string(temp_counter++);
-                string decl_type = type_str == "auto" ? "auto" : type_str;
-                string out = "auto " + tmp + " = " + clean_expr + ";\n";
-                if (current_returns_expected) {
-                    out += "if (!" + tmp + ") return std::unexpected(" + tmp + ".error());\n";
-                }
-                out += (is_mut ? "" : "const ") + decl_type + " " + name + " = *" + tmp + ";";
-                return out;
-            }
-
-            return (is_mut ? "" : "const ") + type_str + " " + name + " = " + folded + ";";
+            return IRInstruction{
+                "LET",
+                {{name, "identifier"}, {inferred_type, "type"}, {folded, "expr"}},
+                is_mut ? "mut" : "const"
+            };
         }
 
         if (t.text == "const") {
@@ -1485,71 +1537,107 @@ class Transpiler {
             if (type_str != "auto") {
                 string inf_expr_t = infer_expr_type(folded);
                 if (!are_types_compatible(type_str, inf_expr_t)) {
-                    cerr << "Semantic Warning: Type mismatch in declaration of '" << name 
-                         << "'. Expected '" << type_str << "' but got '" << inf_expr_t << "' (line " << t.line << ")\n";
+                    report_semantic_warning("Type mismatch in declaration of '" + name 
+                         + "'. Expected '" + type_str + "' but got '" + inf_expr_t + "'", t.line, t.col);
                 }
             }
 
             declare_variable(name, inferred_type, t.line, true, folded);
-            return "const " + inferred_type + " " + name + " = " + folded + ";";
+            return IRInstruction{
+                "CONST",
+                {{name, "identifier"}, {inferred_type, "type"}, {folded, "expr"}},
+                ""
+            };
         }
         
         if (t.text == "if") {
             advance();
             string cond = parse_expr(SeedToken::LBrace);
-            string block = parse_block();
-            string else_block = "";
+            vector<IRInstruction> body1 = parse_ir_block();
+            vector<IRInstruction> body2;
             if (peek().text == "else") {
                 advance();
                 if (peek().text == "if") {
-                    else_block = " else " + parse_statement();
+                    body2.push_back(parse_statement_ir());
                 } else {
-                    else_block = " else " + parse_block();
+                    body2 = parse_ir_block();
                 }
             }
-            return "if (" + cond + ") " + block + else_block;
+            return IRInstruction{
+                "IF",
+                {{cond, "expr"}},
+                "",
+                body1,
+                body2
+            };
         }
         
         if (t.text == "while") {
             advance();
             string cond = parse_expr(SeedToken::LBrace);
-            string block = parse_block();
-            return "while (" + cond + ") " + block;
+            vector<IRInstruction> body = parse_ir_block();
+            return IRInstruction{
+                "WHILE",
+                {{cond, "expr"}},
+                "",
+                body
+            };
         }
 
         if (t.text == "loop") {
             advance();
-            string block = parse_block();
-            return "while (true) " + block;
+            vector<IRInstruction> body = parse_ir_block();
+            return IRInstruction{
+                "LOOP",
+                {},
+                "",
+                body
+            };
         }
 
         if (t.text == "match") {
-            return parse_match_statement();
+            advance(); // consume 'match'
+            string selector = parse_expr(SeedToken::LBrace);
+            if (peek().type == SeedToken::LBrace) advance();
+            vector<IROperand> operands = {{selector, "selector"}};
+            while (peek().type != SeedToken::RBrace && peek().type != SeedToken::Eof) {
+                string variant = advance().text;
+                if (peek().type == SeedToken::LParen) {
+                    advance(); // '('
+                    while (peek().type != SeedToken::RParen && peek().type != SeedToken::Eof) advance();
+                    if (peek().type == SeedToken::RParen) advance();
+                }
+                consume_fat_arrow();
+                string arm_expr = parse_expr(SeedToken::Comma, SeedToken::RBrace);
+                operands.push_back({variant, "pattern"});
+                operands.push_back({arm_expr, "body"});
+                if (peek().type == SeedToken::Comma || peek().type == SeedToken::Semicolon) advance();
+            }
+            if (peek().type == SeedToken::RBrace) advance();
+            return IRInstruction{
+                "MATCH",
+                operands,
+                ""
+            };
         }
         
         if (t.text == "for") {
             advance();
-            string var = advance().text; // i or name
+            string var = advance().text;
             advance(); // in
             string iter = parse_expr(SeedToken::LBrace);
             
             push_scope();
             declare_variable(var, "int", t.line);
-
-            // Quick check if range
-            size_t range_pos = iter.find("..");
-            string result;
-            if (range_pos != string::npos) {
-                string start = iter.substr(0, range_pos);
-                string end = iter.substr(range_pos + 2);
-                string block = parse_block();
-                result = "for (int " + var + " = " + start + "; " + var + " < " + end + "; ++" + var + ") " + block;
-            } else {
-                string block = parse_block();
-                result = "for (auto& " + var + " : " + iter + ") " + block;
-            }
+            vector<IRInstruction> body = parse_ir_block();
             pop_scope();
-            return result;
+            
+            return IRInstruction{
+                "FOR",
+                {{var, "identifier"}, {iter, "expr"}},
+                "",
+                body
+            };
         }
         
         if (t.text == "return") {
@@ -1561,41 +1649,218 @@ class Transpiler {
             if (!current_function_return_type.empty()) {
                 string inf_type = infer_expr_type(folded);
                 if (!are_types_compatible(current_function_return_type, inf_type)) {
-                    cerr << "Semantic Warning: Type mismatch in return statement. Function returns '" 
-                         << current_function_return_type << "' but got '" << inf_type << "' (line " << t.line << ")\n";
+                    report_semantic_warning("Type mismatch in return statement. Function returns '" 
+                         + current_function_return_type + "' but got '" + inf_type + "'", t.line, t.col);
                 }
             }
-            return "return " + folded + ";";
+            return IRInstruction{
+                "RETURN",
+                {{folded, "expr"}},
+                ""
+            };
         }
         
-        // Skip unrecognized statements to avoid emitting raw SEED code
+        if (t.text == "break") {
+            advance();
+            if (peek().type == SeedToken::Semicolon) advance();
+            return IRInstruction{"BREAK", {}, ""};
+        }
+        if (t.text == "continue") {
+            advance();
+            if (peek().type == SeedToken::Semicolon) advance();
+            return IRInstruction{"CONTINUE", {}, ""};
+        }
+        
+        // Skip unrecognized statements
         if (t.text == "fn" || t.text == "type" || t.text == "struct" || t.text == "impl") {
             while (peek().type != SeedToken::Semicolon && peek().type != SeedToken::RBrace && peek().type != SeedToken::Eof) {
                 advance();
             }
             if (peek().type == SeedToken::Semicolon) advance();
-            return "";
+            return IRInstruction{"EXPR", {{ "", "empty" }}, ""};
         }
         
         // Expression statement
         string expr = parse_expr(SeedToken::Semicolon, SeedToken::RBrace);
         if (peek().type == SeedToken::Semicolon) advance();
-        return expr + ";";
+        return IRInstruction{
+            "EXPR",
+            {{expr, "expr"}},
+            ""
+        };
+    }
+
+    string parse_statement() {
+        IRInstruction inst = parse_statement_ir();
+        return compile_ir_instruction(inst);
+    }
+
+    string compile_ir_instruction(const IRInstruction& inst) {
+        if (inst.opcode == "LET") {
+            string name = inst.operands[0].value;
+            string type_str = inst.operands[1].value;
+            string expr = inst.operands[2].value;
+            bool is_mut = (inst.result == "mut");
+            
+            if (has_question_mark_operator(expr)) {
+                string clean_expr = without_question_mark(expr);
+                string tmp = "__seed_try_" + name + "_" + to_string(temp_counter++);
+                string decl_type = type_str == "auto" ? "auto" : type_str;
+                string out = "auto " + tmp + " = " + clean_expr + ";\n";
+                if (current_returns_expected) {
+                    out += "if (!" + tmp + ") return std::unexpected(" + tmp + ".error());\n";
+                }
+                out += (is_mut ? "" : "const ") + decl_type + " " + name + " = *" + tmp + ";";
+                return out;
+            }
+            return (is_mut ? "" : "const ") + type_str + " " + name + " = " + expr + ";";
+        }
+        if (inst.opcode == "CONST") {
+            string name = inst.operands[0].value;
+            string type_str = inst.operands[1].value;
+            string expr = inst.operands[2].value;
+            return "const " + type_str + " " + name + " = " + expr + ";";
+        }
+        if (inst.opcode == "IF") {
+            string cond = inst.operands[0].value;
+            string b1 = compile_ir_block(inst.body1);
+            string b2 = inst.body2.empty() ? "" : " else " + compile_ir_block(inst.body2);
+            return "if (" + cond + ") " + b1 + b2;
+        }
+        if (inst.opcode == "WHILE") {
+            string cond = inst.operands[0].value;
+            string b = compile_ir_block(inst.body1);
+            return "while (" + cond + ") " + b;
+        }
+        if (inst.opcode == "LOOP") {
+            string b = compile_ir_block(inst.body1);
+            return "while (true) " + b;
+        }
+        if (inst.opcode == "FOR") {
+            string var = inst.operands[0].value;
+            string iter = inst.operands[1].value;
+            string block = compile_ir_block(inst.body1);
+            size_t range_pos = iter.find("..");
+            if (range_pos != string::npos) {
+                string start = iter.substr(0, range_pos);
+                string end = iter.substr(range_pos + 2);
+                return "for (int " + var + " = " + start + "; " + var + " < " + end + "; ++" + var + ") " + block;
+            }
+            return "for (auto& " + var + " : " + iter + ") " + block;
+        }
+        if (inst.opcode == "RETURN") {
+            string expr = inst.operands.empty() ? "" : inst.operands[0].value;
+            return "return " + expr + ";";
+        }
+        if (inst.opcode == "BREAK") return "break;";
+        if (inst.opcode == "CONTINUE") return "continue;";
+        if (inst.opcode == "MATCH") {
+            string selector = inst.operands[0].value;
+            bool is_union = false;
+            string sel_type = resolve_variable(trim_copy(selector));
+            if (sel_type.find("std::variant<") == 0) {
+                is_union = true;
+            }
+            
+            if (is_union) {
+                string cpp = "([&](){\n";
+                cpp += "auto __match_value = " + selector + ";\n";
+                int arms_count = (inst.operands.size() - 1) / 2;
+                for (int i = 0; i < arms_count; ++i) {
+                    string var = inst.operands[1 + i*2].value;
+                    string expr = inst.operands[2 + i*2].value;
+                    string type_name = map_type(var);
+                    if (i == 0) cpp += "if (std::holds_alternative<" + type_name + ">(__match_value)) ";
+                    else cpp += "else if (std::holds_alternative<" + type_name + ">(__match_value)) ";
+                    cpp += "{\nauto " + selector + " = std::get<" + type_name + ">(__match_value);\nreturn " + expr + ";\n}\n";
+                }
+                if (arms_count > 0) {
+                    cpp += "else { throw std::runtime_error(\"exhaustive match failed\"); }\n";
+                }
+                cpp += "})()";
+                return cpp;
+            } else {
+                string cpp = "([&](){\n";
+                int arms_count = (inst.operands.size() - 1) / 2;
+                for (int i = 0; i < arms_count; ++i) {
+                    string var = inst.operands[1 + i*2].value;
+                    string expr = inst.operands[2 + i*2].value;
+                    if (i == 0) cpp += "if (" + selector + " == " + var + ") ";
+                    else cpp += "else if (" + selector + " == " + var + ") ";
+                    cpp += "return " + expr + ";\n";
+                }
+                if (arms_count > 0) {
+                    string lastExpr = inst.operands.back().value;
+                    cpp += "else return " + lastExpr + ";\n";
+                } else {
+                    cpp += "return 0;\n";
+                }
+                cpp += "})()";
+                return cpp;
+            }
+        }
+        if (inst.opcode == "EXPR") {
+            return inst.operands[0].value + ";";
+        }
+        return "";
+    }
+
+    string compile_ir_block(const vector<IRInstruction>& insts) {
+        string cpp = "{\n";
+        for (const auto& inst : insts) {
+            string line = compile_ir_instruction(inst);
+            if (!line.empty()) cpp += line + "\n";
+        }
+        cpp += "}";
+        return cpp;
     }
 
 public:
-    Transpiler(vector<Token> t) : tokens(t) {
+    string source;
+    string file_path;
+    Transpiler(vector<Token> t, string src = "", string path = "") : tokens(t), source(src), file_path(path) {
         push_scope(); // Global scope
         initialize_builtins();
     }
+
+    string translate_where_clause(string clause) {
+        clause = trim_copy(clause);
+        if (clause.empty()) return "";
+        size_t colon_pos = clause.find(":");
+        if (colon_pos != string::npos) {
+            string t_param = trim_copy(clause.substr(0, colon_pos));
+            string trait = trim_copy(clause.substr(colon_pos + 1));
+            return "requires std::is_base_of_v<" + trait + ", " + t_param + ">";
+        }
+        return "requires " + clause;
+    }
     
     void parse_top_level() {
+        string current_attributes = "";
         while (peek().type != SeedToken::Eof) {
             Token t = peek();
+            
+            // Check for attributes
+            if (t.type == SeedToken::Keyword && t.text.find("#[") == 0) {
+                current_attributes = advance().text;
+                continue;
+            }
+
             if (t.text == "type" || t.text == "struct") {
                 advance();
                 string name = "AnonType";
                 if (peek().type == SeedToken::Identifier) name = advance().text;
+                
+                // Parse optional generic parameters Box[T]
+                string generic_params = "";
+                if (peek().type == SeedToken::LBracket) {
+                    advance(); // [
+                    while (peek().type != SeedToken::RBracket && peek().type != SeedToken::Eof) {
+                        generic_params += advance().text;
+                        if (peek().type == SeedToken::Comma) { generic_params += ", "; advance(); }
+                    }
+                    if (peek().type == SeedToken::RBracket) advance(); // ]
+                }
                 
                 bool is_simple_alias = false;
                 if (peek().type == SeedToken::Assign) {
@@ -1608,10 +1873,9 @@ public:
                     advance(); // Assign '='
                     string target_type = map_type(parse_type_str());
                     if (peek().type == SeedToken::Semicolon) advance();
-                    types[name] = {name, "", {}, {}};
-                    global_statements.push_back("using " + name + " = " + target_type + ";");
+                    types[name] = {name, "", {}, {}, true, generic_params, {}};
+                    global_statements.push_back((generic_params.empty() ? "" : "template<typename " + generic_params + ">\n") + "using " + name + " = " + target_type + ";");
                 } else {
-                    // Handle '=' before '{' for type declarations (e.g., type Name = { ... })
                     if (peek().type == SeedToken::Assign) advance(); // Skip '='
                     if (peek().type == SeedToken::LBrace) advance(); // LBrace
                     string body;
@@ -1619,18 +1883,84 @@ public:
                         string field_name = advance().text;
                         if (peek().type == SeedToken::Colon) advance(); // Colon
                         string type_str = map_type(parse_type_str());
-                        // comma or semicolon or newline
                         if (peek().type == SeedToken::Comma || peek().type == SeedToken::Semicolon) advance();
                         body += type_str + " " + field_name + ";\n";
                     }
                     if (peek().type == SeedToken::RBrace) advance(); // RBrace
-                    types[name] = {name, body, {}, {}};
+                    types[name] = {name, body, {}, {}, false, generic_params, {}};
                 }
+                current_attributes = "";
+            }
+            else if (t.text == "trait") {
+                advance(); // trait
+                string trait_name = advance().text;
+                if (peek().type == SeedToken::LBrace) advance(); // LBrace
+                string body = "virtual ~" + trait_name + "() = default;\n";
+                while (peek().type != SeedToken::Eof && peek().type != SeedToken::RBrace) {
+                    if (peek().text == "fn") {
+                        advance(); // fn
+                        string meth_name = advance().text;
+                        advance(); // LParen
+                        string params;
+                        bool has_self = false;
+                        while (peek().type != SeedToken::RParen) {
+                            if (peek().text == "self" || peek().text == "mut") {
+                                has_self = true;
+                                if (peek().text == "mut") advance();
+                                advance(); // self
+                            } else {
+                                string pname = advance().text;
+                                advance(); // colon
+                                string ptype = map_type(parse_type_str());
+                                params += ptype + " " + pname;
+                                if (peek().type == SeedToken::Comma) { advance(); params += ", "; }
+                            }
+                        }
+                        advance(); // RParen
+                        string ret_type = "void";
+                        if (peek().type == SeedToken::Arrow) {
+                            advance();
+                            ret_type = map_type(parse_type_str());
+                        }
+                        body += "virtual " + ret_type + " " + meth_name + "(" + params + ") = 0;\n";
+                        if (peek().type == SeedToken::Semicolon) advance();
+                    } else {
+                        advance();
+                    }
+                }
+                if (peek().type == SeedToken::RBrace) advance(); // RBrace
+                types[trait_name] = {trait_name, body, {}, {}, false, "", {}};
+                current_attributes = "";
             }
             else if (t.text == "impl") {
-                advance();
-                string name = "AnonImpl";
-                if (peek().type == SeedToken::Identifier) name = advance().text;
+                advance(); // impl
+                string impl_generics = "";
+                if (peek().type == SeedToken::LBracket) {
+                    advance(); // [
+                    while (peek().type != SeedToken::RBracket && peek().type != SeedToken::Eof) {
+                        impl_generics += advance().text;
+                        if (peek().type == SeedToken::Comma) { impl_generics += ", "; advance(); }
+                    }
+                    if (peek().type == SeedToken::RBracket) advance(); // ]
+                }
+                string first_name = advance().text;
+                string name = first_name;
+                string trait_name = "";
+                if (peek().text == "for") {
+                    advance(); // for
+                    trait_name = first_name;
+                    name = advance().text;
+                }
+                if (peek().type == SeedToken::LBracket) {
+                    advance(); // [
+                    while (peek().type != SeedToken::RBracket && peek().type != SeedToken::Eof) advance();
+                    if (peek().type == SeedToken::RBracket) advance(); // ]
+                }
+                
+                if (!trait_name.empty()) {
+                    types[name].base_classes.push_back(trait_name);
+                }
+
                 if (peek().type == SeedToken::LBrace) advance(); // LBrace
                 while (peek().type != SeedToken::Eof && peek().type != SeedToken::RBrace) {
                     if (peek().text == "fn" || peek().text == "pub") {
@@ -1685,12 +2015,14 @@ public:
                         current_function_return_type = previous_function_return_type;
                         pop_scope();
                         
+                        block.insert(2, "seed::FrameGuard __frame_guard(\"" + name + "::" + meth_name + "\", \"" + file_path + "\", " + to_string(t.line) + ");\n");
+
                         if (has_self) {
                             block.insert(2, "auto& self = *this;\n");
                         }
                         
-                        string decl = (has_self ? "" : "static ") + ret_type + " " + meth_name + "(" + params + ");";
-                        string def = ret_type + " " + name + "::" + meth_name + "(" + params + ") " + block;
+                        string decl = (has_self ? "" : "static ") + (impl_generics.empty() ? "" : "template<typename " + impl_generics + "> ") + ret_type + " " + meth_name + "(" + params + ");";
+                        string def = (impl_generics.empty() ? "" : "template<typename " + impl_generics + ">\n") + ret_type + " " + name + "::" + meth_name + "(" + params + ") " + block;
                         
                         types[name].methods_decls.push_back(decl);
                         types[name].methods_impls.push_back(def);
@@ -1699,11 +2031,24 @@ public:
                     }
                 }
                 if (peek().type == SeedToken::RBrace) advance(); // RBrace
+                current_attributes = "";
             }
             else if (t.text == "fn" || t.text == "pub") {
                 if (t.text == "pub") advance();
                 advance(); // fn
                 string func_name = advance().text;
+                
+                string func_generics = "";
+                if (peek().type == SeedToken::LBracket || peek().type == SeedToken::Less) {
+                    SeedToken close_tok = (peek().type == SeedToken::LBracket) ? SeedToken::RBracket : SeedToken::Greater;
+                    advance(); // [ or <
+                    while (peek().type != close_tok && peek().type != SeedToken::Eof) {
+                        func_generics += advance().text;
+                        if (peek().type == SeedToken::Comma) { func_generics += ", "; advance(); }
+                    }
+                    if (peek().type == close_tok) advance(); // ] or >
+                }
+
                 advance(); // LParen
                 string params = "";
                 vector<string> param_types;
@@ -1726,6 +2071,14 @@ public:
                 }
                 skip_effect_clause();
 
+                string where_clause = "";
+                if (peek().text == "where") {
+                    advance(); // where
+                    while (peek().type != SeedToken::LBrace && peek().type != SeedToken::Eof) {
+                        where_clause += advance().text + " ";
+                    }
+                }
+
                 declared_functions[func_name] = {ret_type, param_types};
 
                 push_scope();
@@ -1737,13 +2090,43 @@ public:
 
                 bool previous_returns_expected = current_returns_expected;
                 current_returns_expected = starts_with(ret_type, "std::expected<");
-                string block = parse_block();
+                
+                bool is_ffi = false;
+                string block = "";
+                if (peek().type == SeedToken::Semicolon) {
+                    advance(); // Semicolon
+                    is_ffi = true;
+                } else if (peek().type == SeedToken::LBrace) {
+                    block = parse_block();
+                } else {
+                    is_ffi = true;
+                }
+
                 current_returns_expected = previous_returns_expected;
                 current_function_return_type = previous_function_return_type;
                 pop_scope();
                 
-                string sig = "auto " + func_name + "(" + params + ") -> " + ret_type;
+                string req_clause = translate_where_clause(where_clause);
+                string sig = "";
+
+                if (is_ffi) {
+                    if (current_attributes == "#[js]") {
+                        sig = "/* JS FFI */\n#ifdef __EMSCRIPTEN__\nEM_JS(" + ret_type + ", " + func_name + ", (" + params + "), {});\n#else\ninline " + ret_type + " " + func_name + "(" + params + ")";
+                        block = " { std::cout << \"[JS FFI Mock] called " + func_name + "\\n\"; " + (ret_type == "void" ? "" : "return {};") + " }\n#endif";
+                    } else if (current_attributes == "#[wasm]") {
+                        sig = "/* WASM FFI */\n#ifdef __EMSCRIPTEN__\nextern \"C\" " + ret_type + " " + func_name + "(" + params + ");\n#else\ninline " + ret_type + " " + func_name + "(" + params + ")";
+                        block = " { std::cout << \"[WASM FFI Mock] called " + func_name + "\\n\"; " + (ret_type == "void" ? "" : "return {};") + " }\n#endif";
+                    } else {
+                        sig = "extern \"C\" " + ret_type + " " + func_name + "(" + params + ")";
+                        block = "";
+                    }
+                } else {
+                    block.insert(2, "seed::FrameGuard __frame_guard(\"" + func_name + "\", \"" + file_path + "\", " + to_string(t.line) + ");\n");
+                    sig = (func_generics.empty() ? "" : "template<typename " + func_generics + ">\n") + (req_clause.empty() ? "" : req_clause + "\n") + "auto " + func_name + "(" + params + ") -> " + ret_type;
+                }
+                
                 functions.push_back({sig, block});
+                current_attributes = "";
             }
             else if (t.text == "test") {
                 advance(); // test

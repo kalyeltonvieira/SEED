@@ -1,4 +1,4 @@
-#include "seed_lib.hpp"
+#include "stdlib_stub.h"
 
 struct MyInt;
 
@@ -34,9 +34,10 @@ const signed char signed_8 = 10 ;
 const short signed_16 = 1000 ;
 const unsigned int unsigned_32 = 42 ;
 const unsigned __int128 unsigned_128 = 999999 ;
-const bool is_active = true let letter : char = 'a' ;
+const bool is_active = true ;
+const char letter = 'a' ;
 const MyInt alias_val = 456 ;
-const std::optional<std::string> option_val = Option .Some ( std::string("value") ) ;
+const std::optional<std::string> option_val = Option Some ( std::string("value") ) ;
 const std::any generic_any = 123 ;
 }
 

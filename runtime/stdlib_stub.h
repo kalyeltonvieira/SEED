@@ -28,11 +28,11 @@ struct Render3D {
     inline Mesh mesh_sphere(double radius, int segments) { return {}; }
     inline Mesh mesh_plane(double size) { return {}; }
     inline Transform transform_new() { return {}; }
-    inline Material Material() { return {}; }
+    inline struct Material Material() { return {}; }
     inline Color color_new(double r, double g, double b, double a) { return {r, g, b, a}; }
     inline Color color_white() { return {1.0, 1.0, 1.0, 1.0}; }
     inline Scene scene_new() { return {}; }
-    inline void scene_add_mesh(Scene&, Mesh, Transform, Material) {}
+    inline void scene_add_mesh(Scene&, Mesh, Transform, struct Material) {}
     inline void scene_add_light(Scene&, Light) {}
     inline void render(Scene&, FrameBuffer) {}
     inline FrameBuffer framebuffer_new(int, int) { return {}; }

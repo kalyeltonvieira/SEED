@@ -254,6 +254,85 @@ struct LicenseObj {
 };
 inline LicenseObj license;
 
+// Stack Frame Tracking
+struct Frame {
+    const char* name;
+    const char* file;
+    int line;
+};
+
+inline std::vector<Frame>& get_stack_frames() {
+    static thread_local std::vector<Frame> frames;
+    return frames;
+}
+
+struct FrameGuard {
+    FrameGuard(const char* name, const char* file, int line) {
+        get_stack_frames().push_back({name, file, line});
+    }
+    ~FrameGuard() {
+        get_stack_frames().pop_back();
+    }
+};
+
+inline void print_stack_trace() {
+    std::cerr << "\nSEED Stack Trace:\n";
+    const auto& frames = get_stack_frames();
+    for (int i = (int)frames.size() - 1; i >= 0; --i) {
+        std::cerr << "  at " << frames[i].name << " (" << frames[i].file << ":" << frames[i].line << ")\n";
+    }
+}
+
+// Memory Leak Tracking
+struct AllocInfo {
+    size_t size;
+    const char* file;
+    int line;
+};
+
+inline std::map<void*, AllocInfo>& get_alloc_registry() {
+    static std::map<void*, AllocInfo> registry;
+    return registry;
+}
+
+inline void* track_alloc(size_t size, const char* file, int line) {
+    void* ptr = std::malloc(size);
+    if (ptr) {
+        get_alloc_registry()[ptr] = {size, file, line};
+    }
+    return ptr;
+}
+
+inline void track_free(void* ptr) {
+    if (ptr) {
+        get_alloc_registry().erase(ptr);
+        std::free(ptr);
+    }
+}
+
+inline void report_memory_leaks() {
+    const auto& reg = get_alloc_registry();
+    if (!reg.empty()) {
+        std::cerr << "\n=== SEED MEMORY LEAK REPORT ===\n";
+        size_t total = 0;
+        for (const auto& [ptr, info] : reg) {
+            std::cerr << "Leak: " << info.size << " bytes at " << ptr 
+                      << " (allocated in " << info.file << ":" << info.line << ")\n";
+            total += info.size;
+        }
+        std::cerr << "Total leaked memory: " << total << " bytes\n";
+        std::cerr << "================================\n\n";
+    }
+}
+
+struct MemoryLeakDetector {
+    ~MemoryLeakDetector() {
+        report_memory_leaks();
+    }
+};
+
+inline MemoryLeakDetector leak_detector;
+
 // Custom Assert Macro throwing exception
 #ifdef assert
 #undef assert
@@ -261,6 +340,7 @@ inline LicenseObj license;
 #define assert(expr) \
     do { \
         if (!(expr)) { \
+            seed::print_stack_trace(); \
             throw std::runtime_error("Assertion failed: " #expr); \
         } \
     } while (0)
